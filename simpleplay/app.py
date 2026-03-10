@@ -22,6 +22,10 @@ COLOR_WARNING = 5
 COLOR_ERROR = 6
 COLOR_PROGRESS_FILL = 7
 COLOR_PROGRESS_EMPTY = 8
+SEARCH_PREFETCH_COUNT = 4
+SEARCH_QUEUE_SEED_LIMIT = 8
+SEARCH_DEBOUNCE_SECONDS = 0.25
+PLAYBACK_RESOLVE_GRACE_SECONDS = 1.0
 
 
 class SimplePlayApp:
@@ -39,6 +43,7 @@ class SimplePlayApp:
         self.search_mode = False
         self.loading_search = False
         self.pending_play_video_id: str | None = None
+        self.pending_play_fallback_at = 0.0
         self.status_message = INTRO_TEXT
 
         self.current_track: Track | None = None
@@ -59,6 +64,9 @@ class SimplePlayApp:
         self.player_idle = True
         self.awaiting_autoplay = False
         self.ignore_playlist_pos_until = 0.0
+        self.search_debounce_deadline: float | None = None
+        self.pending_search_query = ""
+        self.last_completed_search_query = ""
 
         self.search_token = 0
         self.should_exit = False
@@ -77,6 +85,8 @@ class SimplePlayApp:
 
         while not self.should_exit:
             self._process_events()
+            self._maybe_start_pending_playback()
+            self._maybe_start_live_search()
             self._draw(stdscr)
             key = stdscr.getch()
             if key == -1:
@@ -123,6 +133,7 @@ class SimplePlayApp:
         if key in (ord("/"),):
             self.search_query = ""
             self.search_mode = True
+            self.search_debounce_deadline = None
             self.status_message = "Search mode."
             return
         if key in (curses.KEY_DOWN, ord("j")):
@@ -163,29 +174,37 @@ class SimplePlayApp:
     def _handle_search_key(self, key: int) -> None:
         if key in (27,):
             self.search_mode = False
+            self.search_debounce_deadline = None
             self.status_message = "Search cancelled."
             return
         if key in (10, 13, curses.KEY_ENTER):
             query = self.search_query.strip()
             self.search_mode = False
+            self.search_debounce_deadline = None
             if query:
-                self._start_search(query)
+                if self._search_needs_refresh(query):
+                    self._start_search(query)
             else:
                 self.status_message = "Enter a search query."
             return
         if key in (curses.KEY_BACKSPACE, 127, 8):
             self.search_query = self.search_query[:-1]
+            self._schedule_live_search()
             return
         if key == 21:
             self.search_query = ""
+            self.search_debounce_deadline = None
             return
         if 32 <= key <= 126:
             self.search_query += chr(key)
+            self._schedule_live_search()
 
     def _move_selection(self, delta: int) -> None:
         if not self.results:
             return
         self.selected_index = max(0, min(len(self.results) - 1, self.selected_index + delta))
+        if self.list_mode == "search":
+            self._prime_track(self.results[self.selected_index])
 
     def _play_selected(self) -> None:
         if not self.results:
@@ -326,6 +345,7 @@ class SimplePlayApp:
 
         self._load_track(track)
         self._start_related_prefetch(track)
+        self._seed_queue_from_search_results(track, reset_queue=reset_queue)
         self._fill_queue_from_related(track)
         self._warm_queue_streams()
         self._sync_queue_results()
@@ -333,19 +353,27 @@ class SimplePlayApp:
     def _load_track(self, track: Track) -> None:
         cache = self.stream_cache.get(track.video_id)
         if cache and cache.is_fresh():
-            try:
-                self.player.load(cache.url, media_title=track.title)
-            except PlayerError as exc:
-                self.status_message = str(exc)
-            else:
-                self.pending_play_video_id = None
-                self.status_message = f"Playing: {track.title}"
-                self._sync_mpv_playlist()
+            self._start_playback(track, cache.url)
             return
 
         self.pending_play_video_id = track.video_id
-        self.status_message = f"Resolving audio stream: {track.title}"
+        self.pending_play_fallback_at = time.time() + PLAYBACK_RESOLVE_GRACE_SECONDS
+        self.status_message = f"Loading: {track.title}"
         self._start_stream_resolve(track)
+
+    def _start_playback(self, track: Track, url: str) -> None:
+        try:
+            self.player.load(url, media_title=track.title)
+        except PlayerError as exc:
+            if self.pending_play_video_id == track.video_id:
+                self.pending_play_video_id = None
+                self.pending_play_fallback_at = 0.0
+            self.status_message = str(exc)
+            return
+        self.pending_play_video_id = None
+        self.pending_play_fallback_at = 0.0
+        self.status_message = f"Playing: {track.title}"
+        self._sync_mpv_playlist()
 
     def _pop_next_track(self) -> Track | None:
         while self.up_next:
@@ -358,6 +386,7 @@ class SimplePlayApp:
     def _start_search(self, query: str) -> None:
         self.search_token += 1
         token = self.search_token
+        self.pending_search_query = query
         self.loading_search = True
         self.status_message = f"Searching YouTube for: {query}"
 
@@ -370,6 +399,61 @@ class SimplePlayApp:
             self.events.put({"type": "search-results", "token": token, "query": query, "tracks": tracks})
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _schedule_live_search(self) -> None:
+        query = self.search_query.strip()
+        if not query:
+            self.search_debounce_deadline = None
+            return
+        self.search_debounce_deadline = time.time() + SEARCH_DEBOUNCE_SECONDS
+
+    def _maybe_start_live_search(self) -> None:
+        if not self.search_mode:
+            return
+        if self.search_debounce_deadline is None or time.time() < self.search_debounce_deadline:
+            return
+
+        self.search_debounce_deadline = None
+        query = self.search_query.strip()
+        if not query or not self._search_needs_refresh(query):
+            return
+        self._start_search(query)
+
+    def _search_needs_refresh(self, query: str) -> bool:
+        normalized = query.strip()
+        if not normalized:
+            return False
+        if self.loading_search and normalized == self.pending_search_query:
+            return False
+        return normalized != self.last_completed_search_query
+
+    def _maybe_start_pending_playback(self) -> None:
+        if not self.pending_play_video_id or not self.current_track:
+            return
+        if self.current_track.video_id != self.pending_play_video_id:
+            self.pending_play_video_id = None
+            self.pending_play_fallback_at = 0.0
+            return
+
+        cache = self.stream_cache.get(self.current_track.video_id)
+        if cache and cache.is_fresh():
+            self._start_playback(self.current_track, cache.url)
+            return
+
+        if time.time() < self.pending_play_fallback_at:
+            return
+        self._start_playback(self.current_track, self.current_track.watch_url)
+
+    def _prime_search_results(self, tracks: Iterable[Track]) -> None:
+        for track in list(tracks)[:SEARCH_PREFETCH_COUNT]:
+            self._prime_track(track)
+
+    def _prime_track(self, track: Track) -> None:
+        self._start_related_prefetch(track)
+        cache = self.stream_cache.get(track.video_id)
+        if cache and cache.is_fresh():
+            return
+        self._start_stream_resolve(track)
 
     def _start_related_prefetch(self, track: Track) -> None:
         if track.video_id in self.related_cache or track.video_id in self.pending_related:
@@ -407,6 +491,22 @@ class SimplePlayApp:
             return
         self._enqueue_tracks(related)
 
+    def _seed_queue_from_search_results(self, track: Track, *, reset_queue: bool) -> None:
+        if not reset_queue or self.up_next or self.related_cache.get(track.video_id):
+            return
+        if self.list_mode != "queue" or not self.results:
+            return
+
+        seeds: list[Track] = []
+        for candidate in self.results:
+            if candidate.video_id == track.video_id:
+                continue
+            seeds.append(candidate)
+            if len(seeds) >= SEARCH_QUEUE_SEED_LIMIT:
+                break
+        if seeds:
+            self._enqueue_tracks(seeds)
+
     def _enqueue_tracks(self, tracks: Iterable[Track]) -> None:
         seen = self._seen_video_ids()
         added = 0
@@ -434,6 +534,7 @@ class SimplePlayApp:
 
     def _warm_queue_streams(self) -> None:
         for track in list(self.up_next)[:3]:
+            self._start_related_prefetch(track)
             cache = self.stream_cache.get(track.video_id)
             if cache and cache.is_fresh():
                 continue
@@ -453,17 +554,21 @@ class SimplePlayApp:
             if event["token"] != self.search_token:
                 return
             self.loading_search = False
+            self.pending_search_query = ""
+            self.last_completed_search_query = event["query"].strip()
             self.list_mode = "search"
             self.results = event["tracks"]
             self.selected_index = 0
             self.list_offset = 0
             self.status_message = f"Loaded {len(self.results)} result(s) for: {event['query']}"
+            self._prime_search_results(self.results)
             return
 
         if kind == "search-error":
             if event["token"] != self.search_token:
                 return
             self.loading_search = False
+            self.pending_search_query = ""
             self.status_message = event["message"]
             return
 
@@ -486,23 +591,15 @@ class SimplePlayApp:
             self.pending_streams.discard(video_id)
             self.stream_cache[video_id] = StreamCacheEntry(url=event["url"])
             if self.pending_play_video_id == video_id and self.current_track and self.current_track.video_id == video_id:
-                try:
-                    self.player.load(event["url"], media_title=self.current_track.title)
-                except PlayerError as exc:
-                    self.status_message = str(exc)
-                else:
-                    self.pending_play_video_id = None
-                    self.status_message = f"Playing: {self.current_track.title}"
-                    self._sync_mpv_playlist()
+                self._maybe_start_pending_playback()
             return
 
         if kind == "stream-error":
             video_id = event["video_id"]
             self.pending_streams.discard(video_id)
-            if self.pending_play_video_id == video_id:
-                self.pending_play_video_id = None
-                self.status_message = event["message"]
-                self._play_next(auto=True)
+            if self.pending_play_video_id == video_id and self.current_track and self.current_track.video_id == video_id:
+                self.pending_play_fallback_at = 0.0
+                self._maybe_start_pending_playback()
             return
 
         if kind == "player-event":
@@ -644,7 +741,7 @@ class SimplePlayApp:
     def _status_attr(self) -> int:
         if self.status_message.startswith("Playing:"):
             return self._white_bold_attr()
-        if self.status_message.startswith(("Loading:", "Resolving", "Searching")):
+        if self.status_message.startswith(("Loading:", "Searching")):
             return self._warning_attr(curses.A_BOLD)
         if self.status_message.startswith(("Search mode", "Loaded", "Loop mode")):
             return self._accent_attr(curses.A_BOLD)
@@ -737,8 +834,6 @@ class SimplePlayApp:
             state_parts.append(f"loop {self.loop_mode.value}")
         if self.loading_search:
             state_parts.append("search")
-        if self.pending_play_video_id:
-            state_parts.append("buffering")
         right_text = "   ".join(state_parts)
         right_x = max(0, width - len(right_text) - 1)
         self._safe_addnstr(stdscr, y, right_x, right_text, width, self._muted_attr())
@@ -843,7 +938,7 @@ class SimplePlayApp:
     def _secondary_status_attr(self) -> int:
         if self.status_message.startswith(("No ", "Could not", "Required ", "mpv ", "Queue ended")):
             return self._error_attr(curses.A_BOLD)
-        if self.status_message.startswith(("Loading:", "Resolving", "Searching")):
+        if self.status_message.startswith(("Loading:", "Searching")):
             return self._accent_attr(curses.A_BOLD)
         return self._muted_attr()
 
@@ -934,6 +1029,7 @@ class SimplePlayApp:
         self.current_duration = float(new_track.duration) if new_track.duration is not None else None
         self.paused = False
         self.pending_play_video_id = None
+        self.pending_play_fallback_at = 0.0
         self.awaiting_autoplay = False
         self.list_mode = "queue"
         self.status_message = f"Playing: {new_track.title}"

@@ -1,6 +1,6 @@
 # simpleplay
 
-`simpleplay` is a terminal YouTube music player. It searches YouTube with `yt-dlp`, plays audio-only through `mpv`, stops cleanly on `Ctrl+C`, keeps autoplaying similar songs from the current track's YouTube mix, and mirrors the queue into `mpv`'s internal playlist so next/previous controls stay in sync.
+`simpleplay` is a terminal YouTube music player. It searches YouTube in a low-latency mode, plays audio-only through `mpv`, stops cleanly on `Ctrl+C`, keeps autoplaying similar songs from the current track's YouTube mix, and mirrors the queue into `mpv`'s internal playlist so next/previous controls stay in sync.
 
 ## Dependencies
 
@@ -48,7 +48,8 @@ python3 -m simpleplay "khruangbin"
 ## Keybindings
 
 - `/` enter search mode with a fresh empty query
-- `Enter` run search from search mode
+- typing in search mode starts a debounced live search automatically
+- `Enter` leave search mode and keep the current results
 - `Esc` leave search mode
 - `j` / `k` move through the current list
 - `Enter` on a search result starts playback
@@ -64,16 +65,18 @@ python3 -m simpleplay "khruangbin"
 
 ## How autoplay works
 
-When a track starts, `simpleplay` asks YouTube for the current video's mix playlist (`list=RD<video_id>`). Those related tracks are added to the in-memory queue, shown in the `Up Next` list, and the next few are prefetched for faster transitions.
+When a track starts, `simpleplay` immediately seeds `Up Next` from the current search results so the queue is usable right away. In parallel, it asks YouTube for the current video's mix playlist (`list=RD<video_id>`). Those related tracks are added to the in-memory queue, shown in the `Up Next` list, and the next few are prefetched for faster transitions.
 
 ## Notes
 
 - The Python side is stdlib-only. There are no Python runtime dependencies beyond packaging.
 - `mpv` is kept alive as one long-running process and controlled over its IPC socket for better responsiveness.
 - The app keeps its queue mirrored into `mpv`'s internal playlist, so `mpv`'s own next/previous controls can move through the same queue.
-- Search results use `yt-dlp` flat playlist search for lower latency.
+- Search uses a fast YouTube page parser first, with `yt-dlp` as fallback when needed.
 - Direct audio stream URLs are cached briefly in memory because YouTube stream URLs expire.
-- If `yt-dlp` starts failing on some videos due YouTube extractor changes, update it first.
+- The first few search results and queued tracks are prefetched in the background so selecting them is more likely to start from a cached direct audio URL.
+- Playback start prefers a prefetched direct audio URL for a short grace window, then falls back to `mpv` loading the YouTube watch URL directly if the resolver is not ready yet.
+- If `yt-dlp` starts failing on some videos due to YouTube extractor changes, update it first.
 
 ## Commands
 
