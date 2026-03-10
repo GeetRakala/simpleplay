@@ -13,6 +13,14 @@ from .youtube import DEFAULT_MIX_LIMIT, DEFAULT_SEARCH_LIMIT, YouTubeClient, You
 
 
 HELP_TEXT = "j/k move  Enter play  / search  space/p pause  h/l seek  n next  b prev  r loop  q quit"
+COLOR_PRIMARY = 1
+COLOR_ACCENT = 2
+COLOR_MUTED = 3
+COLOR_ACTIVE = 4
+COLOR_WARNING = 5
+COLOR_ERROR = 6
+COLOR_PROGRESS_FILL = 7
+COLOR_PROGRESS_EMPTY = 8
 
 
 class SimplePlayApp:
@@ -78,10 +86,20 @@ class SimplePlayApp:
         curses.start_color()
         curses.use_default_colors()
         if curses.has_colors():
-            try:
-                curses.init_pair(1, curses.COLOR_WHITE, -1)
-            except curses.error:
-                pass
+            for pair_id, color in (
+                (COLOR_PRIMARY, curses.COLOR_WHITE),
+                (COLOR_ACCENT, curses.COLOR_CYAN),
+                (COLOR_MUTED, curses.COLOR_BLUE),
+                (COLOR_ACTIVE, curses.COLOR_GREEN),
+                (COLOR_WARNING, curses.COLOR_YELLOW),
+                (COLOR_ERROR, curses.COLOR_RED),
+                (COLOR_PROGRESS_FILL, curses.COLOR_GREEN),
+                (COLOR_PROGRESS_EMPTY, curses.COLOR_BLUE),
+            ):
+                try:
+                    curses.init_pair(pair_id, color, -1)
+                except curses.error:
+                    continue
         stdscr.nodelay(False)
         stdscr.timeout(100)
         try:
@@ -540,31 +558,42 @@ class SimplePlayApp:
 
         self._fix_selection()
         self._sync_cursor_visibility()
+        layout = self._layout(height)
 
         header = f"simpleplay  loop:{self.loop_mode.value}  state:{self._player_state_label()}"
         if self.loading_search:
             header += "  search:busy"
         if self.pending_play_video_id:
             header += "  resolve:busy"
-        self._safe_addnstr(stdscr, 0, 0, header, width, curses.A_BOLD)
+        self._safe_addnstr(stdscr, layout["header_y"], 0, header, width, self._header_attr())
 
-        search_prefix = "/" if self.search_mode else " "
-        search_line = f"search {search_prefix}{self.search_query}"
-        self._safe_addnstr(stdscr, 1, 0, search_line, width)
-        self._safe_addnstr(stdscr, 2, 0, self._render_progress(width), width)
-        self._safe_addnstr(stdscr, 3, 0, self.status_message, width, self._status_attr())
-        self._safe_addnstr(stdscr, 4, 0, self._results_label(), width, curses.A_BOLD)
+        self._draw_search_line(stdscr, layout["search_y"], width)
+        self._draw_progress_bar(stdscr, layout["progress_y"], width)
+        self._safe_addnstr(
+            stdscr,
+            layout["status_y"],
+            0,
+            self.status_message,
+            width,
+            self._status_attr(),
+        )
+        self._safe_addnstr(
+            stdscr,
+            layout["label_y"],
+            0,
+            self._results_label(),
+            width,
+            self._results_label_attr(),
+        )
 
-        body_top = 5
-        footer_rows = 1
-        body_height = max(3, height - body_top - footer_rows)
-        self._draw_results(stdscr, body_top, body_height, width)
+        body_height = max(1, height - layout["body_top"] - layout["footer_rows"])
+        self._draw_results(stdscr, layout["body_top"], body_height, width)
         self._draw_footer(stdscr, height, width)
 
         if self.search_mode:
-            cursor_x = min(width - 1, len("search /") + len(self.search_query))
+            cursor_x = min(width - 1, len("Search  /") + len(self.search_query))
             try:
-                stdscr.move(1, cursor_x)
+                stdscr.move(layout["search_y"], cursor_x)
             except curses.error:
                 pass
         stdscr.refresh()
@@ -572,7 +601,7 @@ class SimplePlayApp:
     def _draw_results(self, stdscr: "curses._CursesWindow", top: int, height: int, width: int) -> None:
         if not self.results:
             message = self._empty_results_message()
-            self._safe_addnstr(stdscr, top, 0, message, width)
+            self._safe_addnstr(stdscr, top, 0, message, width, self._muted_attr())
             return
 
         self._adjust_list_offset(height)
@@ -582,14 +611,14 @@ class SimplePlayApp:
             prefix = ">" if idx == self.selected_index else " "
             duration = format_duration(track.duration)
             channel = track.channel or "unknown channel"
-            line = f"{prefix} {track.title}  [{duration}]  {channel}"
-            attr = curses.A_REVERSE if idx == self.selected_index else curses.A_NORMAL
+            line = f"  {prefix} {track.title}  [{duration}]  {channel}"
+            attr = self._selected_row_attr() if idx == self.selected_index else self._row_attr()
             self._safe_addnstr(stdscr, top + row, 0, line, width, attr)
 
     def _draw_footer(self, stdscr: "curses._CursesWindow", height: int, width: int) -> None:
-        self._safe_addnstr(stdscr, height - 1, 0, HELP_TEXT, width, curses.A_DIM)
+        self._safe_addnstr(stdscr, height - 1, 0, HELP_TEXT, width, self._help_attr())
 
-    def _render_progress(self, width: int) -> str:
+    def _progress_parts(self, width: int) -> tuple[str, int, int, str]:
         position = format_duration(self.current_position)
         duration = format_duration(self.current_duration)
         bar_width = max(10, width - len(position) - len(duration) - 6)
@@ -599,8 +628,8 @@ class SimplePlayApp:
             ratio = min(max(self.current_position / self.current_duration, 0.0), 1.0)
 
         filled = int(bar_width * ratio)
-        bar = "[" + ("#" * filled) + ("-" * (bar_width - filled)) + "]"
-        return f"{position} {bar} {duration}"
+        filled = max(0, min(filled, bar_width))
+        return position, filled, bar_width, duration
 
     def _fix_selection(self) -> None:
         if not self.results:
@@ -632,7 +661,13 @@ class SimplePlayApp:
     def _status_attr(self) -> int:
         if self.status_message.startswith("Playing:"):
             return self._white_bold_attr()
-        return curses.A_NORMAL
+        if self.status_message.startswith(("Loading:", "Resolving", "Searching")):
+            return self._warning_attr(curses.A_BOLD)
+        if self.status_message.startswith(("Search mode", "Loaded", "Loop mode")):
+            return self._accent_attr(curses.A_BOLD)
+        if self.status_message.startswith(("No ", "Could not", "mpv ", "Required ", "Enter ", "Queue ended")):
+            return self._error_attr(curses.A_BOLD)
+        return self._primary_attr()
 
     def _white_bold_attr(self) -> int:
         attr = curses.A_BOLD
@@ -649,6 +684,110 @@ class SimplePlayApp:
                 return "Loading up next..."
             return "Up next is empty."
         return "No results yet."
+
+    def _layout(self, height: int) -> dict[str, int]:
+        if height >= 18:
+            return {
+                "header_y": 0,
+                "search_y": 2,
+                "progress_y": 4,
+                "status_y": 6,
+                "label_y": 8,
+                "body_top": 9,
+                "footer_rows": 2,
+            }
+        return {
+            "header_y": 0,
+            "search_y": 1,
+            "progress_y": 2,
+            "status_y": 3,
+            "label_y": 4,
+            "body_top": 5,
+            "footer_rows": 1,
+        }
+
+    def _draw_search_line(self, stdscr: "curses._CursesWindow", y: int, width: int) -> None:
+        x = 0
+        self._safe_addnstr(stdscr, y, x, "Search", width, self._accent_attr(curses.A_BOLD))
+        x += len("Search")
+        self._safe_addnstr(stdscr, y, x, "  ", width, self._primary_attr())
+        x += 2
+        prompt_attr = self._warning_attr(curses.A_BOLD) if self.search_mode else self._muted_attr()
+        self._safe_addnstr(stdscr, y, x, "/", width, prompt_attr)
+        x += 1
+        query = self.search_query or ("type a query" if self.search_mode else "")
+        query_attr = self._primary_attr() if self.search_query else self._muted_attr()
+        self._safe_addnstr(stdscr, y, x, query, width, query_attr)
+
+    def _draw_progress_bar(self, stdscr: "curses._CursesWindow", y: int, width: int) -> None:
+        position, filled, bar_width, duration = self._progress_parts(width)
+
+        x = 0
+        self._safe_addnstr(stdscr, y, x, position, width, self._muted_attr())
+        x += len(position) + 1
+        self._safe_addnstr(stdscr, y, x, "[", width, self._muted_attr())
+        x += 1
+
+        fill_attr = self._progress_fill_attr(curses.A_BOLD)
+        if self.paused:
+            fill_attr = self._warning_attr(curses.A_BOLD)
+        self._safe_addnstr(stdscr, y, x, "=" * filled, width, fill_attr)
+        x += filled
+        self._safe_addnstr(stdscr, y, x, "-" * (bar_width - filled), width, self._progress_empty_attr())
+        x += bar_width - filled
+        self._safe_addnstr(stdscr, y, x, "]", width, self._muted_attr())
+        x += 1
+        self._safe_addnstr(stdscr, y, x, f" {duration}", width, self._muted_attr())
+
+    def _header_attr(self) -> int:
+        return self._accent_attr(curses.A_BOLD)
+
+    def _results_label_attr(self) -> int:
+        if self.list_mode == "queue":
+            return self._warning_attr(curses.A_BOLD)
+        return self._accent_attr(curses.A_BOLD)
+
+    def _selected_row_attr(self) -> int:
+        return self._primary_attr(curses.A_BOLD | curses.A_REVERSE)
+
+    def _row_attr(self) -> int:
+        return self._primary_attr()
+
+    def _help_attr(self) -> int:
+        return self._muted_attr(curses.A_DIM)
+
+    def _primary_attr(self, extra: int = 0) -> int:
+        return self._color_attr(COLOR_PRIMARY, extra)
+
+    def _accent_attr(self, extra: int = 0) -> int:
+        return self._color_attr(COLOR_ACCENT, extra)
+
+    def _muted_attr(self, extra: int = 0) -> int:
+        return self._color_attr(COLOR_MUTED, extra)
+
+    def _active_attr(self, extra: int = 0) -> int:
+        return self._color_attr(COLOR_ACTIVE, extra)
+
+    def _warning_attr(self, extra: int = 0) -> int:
+        return self._color_attr(COLOR_WARNING, extra)
+
+    def _error_attr(self, extra: int = 0) -> int:
+        return self._color_attr(COLOR_ERROR, extra)
+
+    def _progress_empty_attr(self, extra: int = 0) -> int:
+        return self._color_attr(COLOR_PROGRESS_EMPTY, extra)
+
+    def _progress_fill_attr(self, extra: int = 0) -> int:
+        return self._color_attr(COLOR_PROGRESS_FILL, extra)
+
+    def _color_attr(self, pair_id: int, extra: int = 0) -> int:
+        attr = extra
+        if curses.has_colors():
+            try:
+                attr |= curses.color_pair(pair_id)
+            except curses.error:
+                pass
+        return attr
 
     def _sync_queue_results(self) -> None:
         if self.list_mode != "queue":
