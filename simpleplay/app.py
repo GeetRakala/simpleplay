@@ -75,7 +75,13 @@ class SimplePlayApp:
             self._handle_key(key)
 
     def _configure_curses(self, stdscr: "curses._CursesWindow") -> None:
+        curses.start_color()
         curses.use_default_colors()
+        if curses.has_colors():
+            try:
+                curses.init_pair(1, curses.COLOR_WHITE, -1)
+            except curses.error:
+                pass
         stdscr.nodelay(False)
         stdscr.timeout(100)
         try:
@@ -545,10 +551,12 @@ class SimplePlayApp:
         search_prefix = "/" if self.search_mode else " "
         search_line = f"search {search_prefix}{self.search_query}"
         self._safe_addnstr(stdscr, 1, 0, search_line, width)
-        self._safe_addnstr(stdscr, 2, 0, self.status_message, width, curses.A_DIM)
+        self._safe_addnstr(stdscr, 2, 0, self._render_progress(width), width)
+        self._safe_addnstr(stdscr, 3, 0, self.status_message, width, self._status_attr())
+        self._safe_addnstr(stdscr, 4, 0, self._results_label(), width, curses.A_BOLD)
 
-        body_top = 4
-        footer_rows = 5
+        body_top = 5
+        footer_rows = 1
         body_height = max(3, height - body_top - footer_rows)
         self._draw_results(stdscr, body_top, body_height, width)
         self._draw_footer(stdscr, height, width)
@@ -579,24 +587,12 @@ class SimplePlayApp:
             self._safe_addnstr(stdscr, top + row, 0, line, width, attr)
 
     def _draw_footer(self, stdscr: "curses._CursesWindow", height: int, width: int) -> None:
-        info_top = max(0, height - 4)
-        current_line = "now: idle"
-        if self.current_track:
-            paused = " [paused]" if self.paused else ""
-            current_line = f"now: {self.current_track.title}{paused}"
-        self._safe_addnstr(stdscr, info_top, 0, current_line, width, curses.A_BOLD)
-
-        progress_line = self._render_progress(width)
-        self._safe_addnstr(stdscr, info_top + 1, 0, progress_line, width)
-
-        next_titles = ", ".join(track.title for track in list(self.up_next)[:3]) or "autoplay queue empty"
-        self._safe_addnstr(stdscr, info_top + 2, 0, f"up next: {next_titles}", width)
-        self._safe_addnstr(stdscr, info_top + 3, 0, HELP_TEXT, width, curses.A_DIM)
+        self._safe_addnstr(stdscr, height - 1, 0, HELP_TEXT, width, curses.A_DIM)
 
     def _render_progress(self, width: int) -> str:
         position = format_duration(self.current_position)
         duration = format_duration(self.current_duration)
-        bar_width = max(10, min(30, width - len(position) - len(duration) - 8))
+        bar_width = max(10, width - len(position) - len(duration) - 6)
 
         ratio = 0.0
         if self.current_duration and self.current_duration > 0:
@@ -604,7 +600,7 @@ class SimplePlayApp:
 
         filled = int(bar_width * ratio)
         bar = "[" + ("#" * filled) + ("-" * (bar_width - filled)) + "]"
-        return f"{bar} {position} / {duration}"
+        return f"{position} {bar} {duration}"
 
     def _fix_selection(self) -> None:
         if not self.results:
@@ -627,6 +623,25 @@ class SimplePlayApp:
         if self.current_track:
             return "playing"
         return "idle"
+
+    def _results_label(self) -> str:
+        if self.list_mode == "queue":
+            return "Up Next"
+        return "Search Results"
+
+    def _status_attr(self) -> int:
+        if self.status_message.startswith("Playing:"):
+            return self._white_bold_attr()
+        return curses.A_NORMAL
+
+    def _white_bold_attr(self) -> int:
+        attr = curses.A_BOLD
+        if curses.has_colors():
+            try:
+                attr |= curses.color_pair(1)
+            except curses.error:
+                pass
+        return attr
 
     def _empty_results_message(self) -> str:
         if self.list_mode == "queue":
