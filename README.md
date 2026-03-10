@@ -1,6 +1,6 @@
 # simpleplay
 
-`simpleplay` is a terminal YouTube music player. It searches YouTube with `yt-dlp`, plays audio-only through `mpv`, stops cleanly on `Ctrl+C`, and keeps autoplaying similar songs from the current track's YouTube mix.
+`simpleplay` is a terminal YouTube music player. It searches YouTube with `yt-dlp`, plays audio-only through `mpv`, stops cleanly on `Ctrl+C`, keeps autoplaying similar songs from the current track's YouTube mix, and mirrors the queue into `mpv`'s internal playlist so next/previous controls stay in sync.
 
 ## Dependencies
 
@@ -11,7 +11,7 @@
 Optional:
 
 - `ffmpeg` is not required for normal playback, but it is useful for local media debugging.
-- A supported JavaScript runtime may help `yt-dlp` on some YouTube videos. This machine already has `node`.
+- A supported JavaScript runtime such as `node` may help `yt-dlp` on some YouTube videos.
 
 ## Install
 
@@ -47,11 +47,12 @@ python3 -m simpleplay "khruangbin"
 
 ## Keybindings
 
-- `/` enter search mode
+- `/` enter search mode with a fresh empty query
 - `Enter` run search from search mode
 - `Esc` leave search mode
-- `j` / `k` move through search results
-- `Enter` on a result starts playback
+- `j` / `k` move through the current list
+- `Enter` on a search result starts playback
+- after playback starts, the main list becomes `Up Next`, and `Enter` on a queued item jumps to it
 - `space` or `p` pause or resume
 - `h` / `l` seek backward or forward 10 seconds
 - `n` play the next queued or similar track
@@ -63,12 +64,13 @@ python3 -m simpleplay "khruangbin"
 
 ## How autoplay works
 
-When a track starts, `simpleplay` asks YouTube for the current video's mix playlist (`list=RD<video_id>`). Those related tracks are added to the in-memory queue and the next few are prefetched for faster transitions.
+When a track starts, `simpleplay` asks YouTube for the current video's mix playlist (`list=RD<video_id>`). Those related tracks are added to the in-memory queue, shown in the `Up Next` list, and the next few are prefetched for faster transitions.
 
 ## Notes
 
 - The Python side is stdlib-only. There are no Python runtime dependencies beyond packaging.
 - `mpv` is kept alive as one long-running process and controlled over its IPC socket for better responsiveness.
+- The app keeps its queue mirrored into `mpv`'s internal playlist, so `mpv`'s own next/previous controls can move through the same queue.
 - Search results use `yt-dlp` flat playlist search for lower latency.
 - Direct audio stream URLs are cached briefly in memory because YouTube stream URLs expire.
 - If `yt-dlp` starts failing on some videos due YouTube extractor changes, update it first.

@@ -13,6 +13,7 @@ from .youtube import DEFAULT_MIX_LIMIT, DEFAULT_SEARCH_LIMIT, YouTubeClient, You
 
 
 HELP_TEXT = "j/k move  Enter play  / search  space/p pause  h/l seek  n next  b prev  r loop  q quit"
+INTRO_TEXT = "Minimal terminal playback for YouTube music."
 COLOR_PRIMARY = 1
 COLOR_ACCENT = 2
 COLOR_MUTED = 3
@@ -38,7 +39,7 @@ class SimplePlayApp:
         self.search_mode = False
         self.loading_search = False
         self.pending_play_video_id: str | None = None
-        self.status_message = "Press / to search."
+        self.status_message = INTRO_TEXT
 
         self.current_track: Track | None = None
         self.current_position = 0.0
@@ -560,23 +561,10 @@ class SimplePlayApp:
         self._sync_cursor_visibility()
         layout = self._layout(height)
 
-        header = f"simpleplay  loop:{self.loop_mode.value}  state:{self._player_state_label()}"
-        if self.loading_search:
-            header += "  search:busy"
-        if self.pending_play_video_id:
-            header += "  resolve:busy"
-        self._safe_addnstr(stdscr, layout["header_y"], 0, header, width, self._header_attr())
-
-        self._draw_search_line(stdscr, layout["search_y"], width)
+        self._draw_header(stdscr, layout["header_y"], width)
         self._draw_progress_bar(stdscr, layout["progress_y"], width)
-        self._safe_addnstr(
-            stdscr,
-            layout["status_y"],
-            0,
-            self.status_message,
-            width,
-            self._status_attr(),
-        )
+        self._draw_now_playing(stdscr, layout["title_y"], layout["meta_y"], width)
+        self._draw_search_line(stdscr, layout["search_y"], width)
         self._safe_addnstr(
             stdscr,
             layout["label_y"],
@@ -608,12 +596,7 @@ class SimplePlayApp:
         end = min(len(self.results), self.list_offset + height)
         for row, idx in enumerate(range(self.list_offset, end)):
             track = self.results[idx]
-            prefix = ">" if idx == self.selected_index else " "
-            duration = format_duration(track.duration)
-            channel = track.channel or "unknown channel"
-            line = f"  {prefix} {track.title}  [{duration}]  {channel}"
-            attr = self._selected_row_attr() if idx == self.selected_index else self._row_attr()
-            self._safe_addnstr(stdscr, top + row, 0, line, width, attr)
+            self._draw_track_row(stdscr, top + row, width, track, idx == self.selected_index)
 
     def _draw_footer(self, stdscr: "curses._CursesWindow", height: int, width: int) -> None:
         self._safe_addnstr(stdscr, height - 1, 0, HELP_TEXT, width, self._help_attr())
@@ -621,7 +604,7 @@ class SimplePlayApp:
     def _progress_parts(self, width: int) -> tuple[str, int, int, str]:
         position = format_duration(self.current_position)
         duration = format_duration(self.current_duration)
-        bar_width = max(10, width - len(position) - len(duration) - 6)
+        bar_width = max(12, width - len(position) - len(duration) - 4)
 
         ratio = 0.0
         if self.current_duration and self.current_duration > 0:
@@ -686,72 +669,146 @@ class SimplePlayApp:
         return "No results yet."
 
     def _layout(self, height: int) -> dict[str, int]:
-        if height >= 18:
+        if height >= 20:
             return {
                 "header_y": 0,
-                "search_y": 2,
-                "progress_y": 4,
-                "status_y": 6,
-                "label_y": 8,
-                "body_top": 9,
+                "progress_y": 2,
+                "title_y": 4,
+                "meta_y": 5,
+                "search_y": 7,
+                "label_y": 9,
+                "body_top": 11,
                 "footer_rows": 2,
             }
         return {
             "header_y": 0,
-            "search_y": 1,
-            "progress_y": 2,
-            "status_y": 3,
-            "label_y": 4,
-            "body_top": 5,
+            "progress_y": 1,
+            "title_y": 2,
+            "meta_y": 3,
+            "search_y": 4,
+            "label_y": 5,
+            "body_top": 6,
             "footer_rows": 1,
         }
 
     def _draw_search_line(self, stdscr: "curses._CursesWindow", y: int, width: int) -> None:
         x = 0
-        self._safe_addnstr(stdscr, y, x, "Search", width, self._accent_attr(curses.A_BOLD))
+        self._safe_addnstr(stdscr, y, x, "Search", width, self._section_attr())
         x += len("Search")
         self._safe_addnstr(stdscr, y, x, "  ", width, self._primary_attr())
         x += 2
-        prompt_attr = self._warning_attr(curses.A_BOLD) if self.search_mode else self._muted_attr()
+        prompt_attr = self._accent_attr(curses.A_BOLD) if self.search_mode else self._muted_attr()
         self._safe_addnstr(stdscr, y, x, "/", width, prompt_attr)
         x += 1
-        query = self.search_query or ("type a query" if self.search_mode else "")
-        query_attr = self._primary_attr() if self.search_query else self._muted_attr()
+        if self.search_query:
+            query = self.search_query
+            query_attr = self._primary_attr()
+        elif self.search_mode:
+            query = "type a query"
+            query_attr = self._muted_attr()
+        else:
+            query = "start a new search"
+            query_attr = self._muted_attr()
         self._safe_addnstr(stdscr, y, x, query, width, query_attr)
 
     def _draw_progress_bar(self, stdscr: "curses._CursesWindow", y: int, width: int) -> None:
+        if not self.current_track:
+            return
+
         position, filled, bar_width, duration = self._progress_parts(width)
 
         x = 0
         self._safe_addnstr(stdscr, y, x, position, width, self._muted_attr())
         x += len(position) + 1
-        self._safe_addnstr(stdscr, y, x, "[", width, self._muted_attr())
-        x += 1
-
         fill_attr = self._progress_fill_attr(curses.A_BOLD)
         if self.paused:
             fill_attr = self._warning_attr(curses.A_BOLD)
-        self._safe_addnstr(stdscr, y, x, "=" * filled, width, fill_attr)
+        self._safe_addnstr(stdscr, y, x, "#" * filled, width, fill_attr)
         x += filled
         self._safe_addnstr(stdscr, y, x, "-" * (bar_width - filled), width, self._progress_empty_attr())
         x += bar_width - filled
-        self._safe_addnstr(stdscr, y, x, "]", width, self._muted_attr())
-        x += 1
         self._safe_addnstr(stdscr, y, x, f" {duration}", width, self._muted_attr())
+
+    def _draw_header(self, stdscr: "curses._CursesWindow", y: int, width: int) -> None:
+        self._safe_addnstr(stdscr, y, 0, "simpleplay", width, self._header_attr())
+
+        state_parts = [self._player_state_label()]
+        if self.loop_mode is not LoopMode.OFF:
+            state_parts.append(f"loop {self.loop_mode.value}")
+        if self.loading_search:
+            state_parts.append("search")
+        if self.pending_play_video_id:
+            state_parts.append("buffering")
+        right_text = "   ".join(state_parts)
+        right_x = max(0, width - len(right_text) - 1)
+        self._safe_addnstr(stdscr, y, right_x, right_text, width, self._muted_attr())
+
+    def _draw_now_playing(self, stdscr: "curses._CursesWindow", title_y: int, meta_y: int, width: int) -> None:
+        if self.current_track:
+            self._safe_addnstr(stdscr, title_y, 0, "Playing:", width, self._section_attr())
+            self._safe_addnstr(
+                stdscr,
+                title_y,
+                len("Playing:") + 2,
+                self.current_track.title,
+                width,
+                self._white_bold_attr(),
+            )
+
+            meta_text, meta_attr = self._now_playing_meta()
+            self._safe_addnstr(stdscr, meta_y, 0, meta_text, width, meta_attr)
+            return
+
+        title = self.status_message or INTRO_TEXT
+        self._safe_addnstr(stdscr, title_y, 0, title, width, self._white_bold_attr())
+        if self.search_mode:
+            self._safe_addnstr(stdscr, meta_y, 0, "Enter to search  Esc to cancel", width, self._muted_attr())
+
+    def _now_playing_meta(self) -> tuple[str, int]:
+        if self.status_message and not self.status_message.startswith("Playing:"):
+            return self.status_message, self._secondary_status_attr()
+
+        parts = []
+        if self.current_track and self.current_track.channel:
+            parts.append(self.current_track.channel)
+        if self.paused:
+            parts.append("paused")
+        return "  ".join(parts) if parts else " ", self._muted_attr()
+
+    def _draw_track_row(
+        self,
+        stdscr: "curses._CursesWindow",
+        y: int,
+        width: int,
+        track: Track,
+        selected: bool,
+    ) -> None:
+        prefix = "> " if selected else "  "
+        prefix_attr = self._accent_attr(curses.A_BOLD) if selected else self._muted_attr()
+        title_attr = self._white_bold_attr() if selected else self._primary_attr()
+        duration = format_duration(track.duration)
+        right_text = duration
+        right_x = max(len(prefix) + 8, width - len(right_text) - 1)
+
+        available = max(1, right_x - len(prefix) - 1)
+        title = self._truncate(track.title, available)
+
+        self._safe_addnstr(stdscr, y, 0, prefix, width, prefix_attr)
+        self._safe_addnstr(stdscr, y, len(prefix), title, width, title_attr)
+        self._safe_addnstr(stdscr, y, right_x, right_text, width, self._muted_attr())
+
+    def _truncate(self, value: str, max_width: int) -> str:
+        if len(value) <= max_width:
+            return value
+        if max_width <= 3:
+            return value[:max_width]
+        return value[: max_width - 3] + "..."
 
     def _header_attr(self) -> int:
         return self._accent_attr(curses.A_BOLD)
 
     def _results_label_attr(self) -> int:
-        if self.list_mode == "queue":
-            return self._warning_attr(curses.A_BOLD)
-        return self._accent_attr(curses.A_BOLD)
-
-    def _selected_row_attr(self) -> int:
-        return self._primary_attr(curses.A_BOLD | curses.A_REVERSE)
-
-    def _row_attr(self) -> int:
-        return self._primary_attr()
+        return self._section_attr()
 
     def _help_attr(self) -> int:
         return self._muted_attr(curses.A_DIM)
@@ -763,7 +820,7 @@ class SimplePlayApp:
         return self._color_attr(COLOR_ACCENT, extra)
 
     def _muted_attr(self, extra: int = 0) -> int:
-        return self._color_attr(COLOR_MUTED, extra)
+        return extra | curses.A_DIM
 
     def _active_attr(self, extra: int = 0) -> int:
         return self._color_attr(COLOR_ACTIVE, extra)
@@ -779,6 +836,16 @@ class SimplePlayApp:
 
     def _progress_fill_attr(self, extra: int = 0) -> int:
         return self._color_attr(COLOR_PROGRESS_FILL, extra)
+
+    def _section_attr(self) -> int:
+        return self._accent_attr(curses.A_BOLD)
+
+    def _secondary_status_attr(self) -> int:
+        if self.status_message.startswith(("No ", "Could not", "Required ", "mpv ", "Queue ended")):
+            return self._error_attr(curses.A_BOLD)
+        if self.status_message.startswith(("Loading:", "Resolving", "Searching")):
+            return self._accent_attr(curses.A_BOLD)
+        return self._muted_attr()
 
     def _color_attr(self, pair_id: int, extra: int = 0) -> int:
         attr = extra
