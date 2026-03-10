@@ -12,12 +12,13 @@ class MPVControllerTests(unittest.TestCase):
         commands: list[list[object]] = []
         controller.command = commands.append  # type: ignore[method-assign]
 
-        controller.load("https://example.com/audio")
+        controller.load("https://example.com/audio", media_title="Track Title")
 
         self.assertEqual(
             commands,
             [
                 ["loadfile", "https://example.com/audio", "replace"],
+                ["set_property", "force-media-title", "Track Title"],
                 ["set_property", "pause", False],
             ],
         )

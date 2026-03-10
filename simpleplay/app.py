@@ -303,7 +303,7 @@ class SimplePlayApp:
         cache = self.stream_cache.get(track.video_id)
         if cache and cache.is_fresh():
             try:
-                self.player.load(cache.url)
+                self.player.load(cache.url, media_title=track.title)
             except PlayerError as exc:
                 self.status_message = str(exc)
             else:
@@ -453,7 +453,7 @@ class SimplePlayApp:
             self.stream_cache[video_id] = StreamCacheEntry(url=event["url"])
             if self.pending_play_video_id == video_id and self.current_track and self.current_track.video_id == video_id:
                 try:
-                    self.player.load(event["url"])
+                    self.player.load(event["url"], media_title=self.current_track.title)
                 except PlayerError as exc:
                     self.status_message = str(exc)
                 else:

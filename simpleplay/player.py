@@ -77,8 +77,10 @@ class MPVController:
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
 
-    def load(self, url: str) -> None:
+    def load(self, url: str, media_title: str | None = None) -> None:
         self.command(["loadfile", url, "replace"])
+        if media_title:
+            self.command(["set_property", "force-media-title", media_title])
         self.command(["set_property", "pause", False])
 
     def toggle_pause(self) -> None:
