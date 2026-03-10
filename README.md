@@ -1,0 +1,84 @@
+# simpleplay
+
+`simpleplay` is a terminal YouTube music player. It searches YouTube with `yt-dlp`, plays audio-only through `mpv`, stops cleanly on `Ctrl+C`, and keeps autoplaying similar songs from the current track's YouTube mix.
+
+## Dependencies
+
+- `python3` 3.11+
+- `yt-dlp`
+- `mpv`
+
+Optional:
+
+- `ffmpeg` is not required for normal playback, but it is useful for local media debugging.
+- A supported JavaScript runtime may help `yt-dlp` on some YouTube videos. This machine already has `node`.
+
+## Install
+
+From this repo:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+If you do not want an editable install, you can still run the app directly with `python3 -m simpleplay`.
+
+## Run
+
+Start the UI with no query:
+
+```bash
+simpleplay
+```
+
+Start with an initial search:
+
+```bash
+simpleplay "daft punk"
+```
+
+Without installing:
+
+```bash
+python3 -m simpleplay "khruangbin"
+```
+
+## Keybindings
+
+- `/` enter search mode
+- `Enter` run search from search mode
+- `Esc` leave search mode
+- `j` / `k` move through search results
+- `Enter` on a result starts playback
+- `space` or `p` pause or resume
+- `h` / `l` seek backward or forward 10 seconds
+- `n` play the next queued or similar track
+- `b` go to the previous track, or restart the current track if more than 5 seconds in
+- `r` cycle loop mode: `off` -> `all` -> `one`
+- `g` / `G` jump to the top or bottom of the results list
+- `q` quit
+- `Ctrl+C` stop playback and exit cleanly
+
+## How autoplay works
+
+When a track starts, `simpleplay` asks YouTube for the current video's mix playlist (`list=RD<video_id>`). Those related tracks are added to the in-memory queue and the next few are prefetched for faster transitions.
+
+## Notes
+
+- The Python side is stdlib-only. There are no Python runtime dependencies beyond packaging.
+- `mpv` is kept alive as one long-running process and controlled over its IPC socket for better responsiveness.
+- Search results use `yt-dlp` flat playlist search for lower latency.
+- Direct audio stream URLs are cached briefly in memory because YouTube stream URLs expire.
+- If `yt-dlp` starts failing on some videos due YouTube extractor changes, update it first.
+
+## Commands
+
+Run tests:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Format or linting commands are not included because this project is stdlib-only and does not ship a formatter config yet.

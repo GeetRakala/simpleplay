@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simpleplay"
+version = "0.1.0"
+description = "Terminal YouTube music player with vim-like bindings"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Codex" }]
+
+[project.scripts]
+simpleplay = "simpleplay.__main__:main"
+
+[tool.setuptools]
+packages = ["simpleplay"]
