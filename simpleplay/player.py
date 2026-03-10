@@ -9,6 +9,8 @@ import threading
 import time
 import uuid
 
+from .models import Track
+
 
 class PlayerError(RuntimeError):
     pass
@@ -73,6 +75,7 @@ class MPVController:
         self._observe("time-pos", 2)
         self._observe("duration", 3)
         self._observe("pause", 4)
+        self._observe("playlist-pos", 5)
 
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
@@ -82,6 +85,35 @@ class MPVController:
         if media_title:
             self.command(["set_property", "force-media-title", media_title])
         self.command(["set_property", "pause", False])
+
+    def set_media_title(self, media_title: str) -> None:
+        self.command(["set_property", "force-media-title", media_title])
+
+    def play_playlist_index(self, index: int) -> None:
+        self.command(["playlist-play-index", index])
+
+    def sync_playlist(self, history: list[Track], up_next: list[Track]) -> None:
+        self.command(["playlist-clear"])
+        for index, track in enumerate(history):
+            self.command(
+                [
+                    "loadfile",
+                    track.watch_url,
+                    "insert-at",
+                    index,
+                    {"force-media-title": track.title},
+                ]
+            )
+        for track in up_next:
+            self.command(
+                [
+                    "loadfile",
+                    track.watch_url,
+                    "append",
+                    -1,
+                    {"force-media-title": track.title},
+                ]
+            )
 
     def toggle_pause(self) -> None:
         self.command(["cycle", "pause"])

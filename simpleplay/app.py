@@ -3,6 +3,7 @@ from __future__ import annotations
 import curses
 import queue
 import threading
+import time
 from collections import deque
 from typing import Iterable
 
@@ -45,6 +46,10 @@ class SimplePlayApp:
         self.related_cache: dict[str, list[Track]] = {}
         self.pending_streams: set[str] = set()
         self.pending_related: set[str] = set()
+        self.playlist_tracks: list[Track] = []
+        self.player_idle = True
+        self.awaiting_autoplay = False
+        self.ignore_playlist_pos_until = 0.0
 
         self.search_token = 0
         self.should_exit = False
@@ -291,6 +296,7 @@ class SimplePlayApp:
         self.current_position = 0.0
         self.current_duration = float(track.duration) if track.duration is not None else None
         self.paused = False
+        self.awaiting_autoplay = False
         self.status_message = f"Loading: {track.title}"
 
         self._load_track(track)
@@ -309,6 +315,7 @@ class SimplePlayApp:
             else:
                 self.pending_play_video_id = None
                 self.status_message = f"Playing: {track.title}"
+                self._sync_mpv_playlist()
             return
 
         self.pending_play_video_id = track.video_id
@@ -389,6 +396,8 @@ class SimplePlayApp:
         if added:
             self._warm_queue_streams()
             self._sync_queue_results()
+            self._sync_mpv_playlist()
+            self._maybe_resume_autoplay()
 
     def _seen_video_ids(self) -> set[str]:
         seen = {track.video_id for track in self.history}
@@ -459,6 +468,7 @@ class SimplePlayApp:
                 else:
                     self.pending_play_video_id = None
                     self.status_message = f"Playing: {self.current_track.title}"
+                    self._sync_mpv_playlist()
             return
 
         if kind == "stream-error":
@@ -485,19 +495,38 @@ class SimplePlayApp:
             data = payload.get("data")
             if name == "pause":
                 self.paused = bool(data)
+            elif name == "core-idle":
+                self.player_idle = bool(data)
             elif name == "time-pos":
                 self.current_position = float(data or 0.0)
             elif name == "duration":
                 self.current_duration = None if data is None else float(data)
+            elif name == "playlist-pos":
+                if self._should_ignore_playlist_pos():
+                    return
+                if data is None:
+                    return
+                self._handle_playlist_position_change(int(data))
             return
 
         if event_name == "end-file":
             if payload.get("reason") != "eof":
                 return
+            self.awaiting_autoplay = True
             if self.loop_mode is LoopMode.ONE:
                 self._replay_current()
                 return
-            self._play_next(auto=True)
+            if self.loop_mode is LoopMode.ALL and not self.up_next:
+                target = self.history[0] if self.history else self.current_track
+                if target:
+                    self._switch_track(
+                        target,
+                        add_previous_to_history=False,
+                        clear_forward=False,
+                        reset_queue=False,
+                    )
+                return
+            self._maybe_resume_autoplay()
 
     def _draw(self, stdscr: "curses._CursesWindow") -> None:
         stdscr.erase()
@@ -652,3 +681,61 @@ class SimplePlayApp:
             curses.curs_set(1 if self.search_mode else 0)
         except curses.error:
             pass
+
+    def _sync_mpv_playlist(self) -> None:
+        if not self.current_track or self.pending_play_video_id:
+            return
+
+        self.playlist_tracks = self.history + [self.current_track] + list(self.up_next)
+        self.ignore_playlist_pos_until = time.time() + 0.35
+        try:
+            self.player.sync_playlist(self.history, list(self.up_next))
+            self.player.set_media_title(self.current_track.title)
+        except PlayerError as exc:
+            self.status_message = str(exc)
+
+    def _should_ignore_playlist_pos(self) -> bool:
+        return time.time() < self.ignore_playlist_pos_until
+
+    def _handle_playlist_position_change(self, index: int) -> None:
+        if index < 0 or index >= len(self.playlist_tracks):
+            return
+
+        new_track = self.playlist_tracks[index]
+        if self.current_track and new_track.video_id == self.current_track.video_id and index == len(self.history):
+            return
+
+        self.history = self.playlist_tracks[:index]
+        self.current_track = new_track
+        self.up_next = deque(self.playlist_tracks[index + 1 :])
+        self.forward_stack.clear()
+        self.current_position = 0.0
+        self.current_duration = float(new_track.duration) if new_track.duration is not None else None
+        self.paused = False
+        self.pending_play_video_id = None
+        self.awaiting_autoplay = False
+        self.list_mode = "queue"
+        self.status_message = f"Playing: {new_track.title}"
+        self.playlist_tracks = self.history + [self.current_track] + list(self.up_next)
+        self._sync_queue_results()
+        self._start_related_prefetch(new_track)
+        self._fill_queue_from_related(new_track)
+        self._warm_queue_streams()
+
+        try:
+            self.player.set_media_title(new_track.title)
+        except PlayerError as exc:
+            self.status_message = str(exc)
+
+    def _maybe_resume_autoplay(self) -> None:
+        if not self.awaiting_autoplay or not self.player_idle or not self.up_next:
+            return
+        next_index = len(self.history) + 1
+        if next_index >= len(self.playlist_tracks):
+            self.playlist_tracks = self.history + ([self.current_track] if self.current_track else []) + list(self.up_next)
+        try:
+            self.player.play_playlist_index(len(self.history) + 1)
+        except PlayerError as exc:
+            self.status_message = str(exc)
+            return
+        self.awaiting_autoplay = False
