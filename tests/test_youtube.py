@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from simpleplay.models import Track
-from simpleplay.youtube import YouTubeClient
+from simpleplay.youtube import YouTubeClient, install_hint_for_binary
 
 
 SEARCH_HTML = """
@@ -104,3 +104,54 @@ class YouTubeClientTests(unittest.TestCase):
         self.assertEqual([track.video_id for track in tracks], ["next456"])
         self.assertEqual(tracks[0].channel, "Next Artist")
         self.assertEqual(tracks[0].duration, 192)
+
+    def test_search_falls_back_to_yt_dlp_package(self) -> None:
+        client = YouTubeClient()
+        client._search_fast = lambda query, limit: []  # type: ignore[method-assign]
+        client._extract_info = lambda target, **kwargs: {  # type: ignore[method-assign]
+            "entries": [
+                {
+                    "id": "pkg123",
+                    "title": "Package Song",
+                    "channel": "Package Artist",
+                    "duration": 201,
+                    "url": "https://www.youtube.com/watch?v=pkg123",
+                }
+            ]
+        }
+
+        tracks = client.search("Package Song", limit=1)
+
+        self.assertEqual([track.video_id for track in tracks], ["pkg123"])
+        self.assertEqual(tracks[0].channel, "Package Artist")
+
+    def test_resolve_stream_url_uses_yt_dlp_payload(self) -> None:
+        client = YouTubeClient()
+        track = Track(video_id="abc123", title="Song")
+        client._extract_info = lambda target, **kwargs: {  # type: ignore[method-assign]
+            "requested_formats": [{"url": "https://cdn.example.com/audio"}]
+        }
+
+        url = client.resolve_stream_url(track)
+
+        self.assertEqual(url, "https://cdn.example.com/audio")
+
+
+class BinaryHintTests(unittest.TestCase):
+    def test_macos_mpv_hint_mentions_homebrew(self) -> None:
+        hint = install_hint_for_binary("mpv", platform="darwin")
+
+        self.assertIn("brew install mpv", hint)
+
+    def test_linux_mpv_hint_mentions_common_package_managers(self) -> None:
+        hint = install_hint_for_binary("mpv", platform="linux")
+
+        self.assertIn("sudo apt install mpv", hint)
+        self.assertIn("sudo dnf install mpv", hint)
+        self.assertIn("sudo pacman -S mpv", hint)
+
+    def test_windows_mpv_hint_mentions_winget(self) -> None:
+        hint = install_hint_for_binary("mpv", platform="win32")
+
+        self.assertIn("winget search mpv", hint)
+        self.assertIn("winget install <mpv-package-id>", hint)

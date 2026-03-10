@@ -5,7 +5,6 @@
 ## Dependencies
 
 - `python3` 3.11+
-- `yt-dlp`
 - `mpv`
 
 Optional:
@@ -14,6 +13,38 @@ Optional:
 - A supported JavaScript runtime such as `node` may help `yt-dlp` on some YouTube videos.
 
 ## Install
+
+From PyPI:
+
+```bash
+pip install simpleplay
+```
+
+`pip` installs the Python `yt-dlp` dependency automatically. `mpv` is still a separate system binary, so `pip` cannot install it for you.
+
+- `mpv`
+
+Install `mpv` with your OS package manager:
+
+```bash
+# macOS
+brew install mpv
+
+# Debian / Ubuntu
+sudo apt install mpv
+
+# Fedora
+sudo dnf install mpv
+
+# Arch
+sudo pacman -S mpv
+
+# Windows
+winget search mpv
+winget install <mpv-package-id>
+```
+
+More options: <https://mpv.io/installation>
 
 From this repo:
 
@@ -69,10 +100,10 @@ When a track starts, `simpleplay` immediately seeds `Up Next` from the current s
 
 ## Notes
 
-- The Python side is stdlib-only. There are no Python runtime dependencies beyond packaging.
+- The only non-Python runtime dependency is `mpv`. `yt-dlp` is installed automatically as a Python package dependency.
 - `mpv` is kept alive as one long-running process and controlled over its IPC socket for better responsiveness.
 - The app keeps its queue mirrored into `mpv`'s internal playlist, so `mpv`'s own next/previous controls can move through the same queue.
-- Search uses a fast YouTube page parser first, with `yt-dlp` as fallback when needed.
+- Search uses a fast YouTube page parser first, with the bundled `yt-dlp` Python package as fallback when needed.
 - Direct audio stream URLs are cached briefly in memory because YouTube stream URLs expire.
 - The first few search results and queued tracks are prefetched in the background so selecting them is more likely to start from a cached direct audio URL.
 - Playback start prefers a prefetched direct audio URL for a short grace window, then falls back to `mpv` loading the YouTube watch URL directly if the resolver is not ready yet.

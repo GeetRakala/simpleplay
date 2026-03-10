@@ -1,17 +1,40 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "simpleplay"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Terminal YouTube music player with vim-like bindings"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
-authors = [{ name = "Codex" }]
+dependencies = ["yt-dlp"]
+authors = [{ name = "Geet" }]
+keywords = ["terminal", "music", "youtube", "mpv", "player"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Players",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/geetrakala/simpleplay"
+Repository = "https://github.com/geetrakala/simpleplay"
+Issues = "https://github.com/geetrakala/simpleplay/issues"
 
 [project.scripts]
 simpleplay = "simpleplay.__main__:main"
 
 [tool.setuptools]
 packages = ["simpleplay"]
+
+[tool.setuptools.dynamic]
+version = { attr = "simpleplay.__version__" }

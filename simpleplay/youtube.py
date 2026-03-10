@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import subprocess
+import sys
 import urllib.parse
 import urllib.request
 from typing import Any, Iterable, Sequence
@@ -35,12 +35,47 @@ class YouTubeError(RuntimeError):
 def require_binary(name: str) -> None:
     if shutil.which(name):
         return
+    hint = install_hint_for_binary(name)
+    if hint:
+        raise YouTubeError(f"Required binary not found: {name}\n\n{hint}")
     raise YouTubeError(f"Required binary not found: {name}")
 
 
+def install_hint_for_binary(name: str, platform: str | None = None) -> str:
+    if name != "mpv":
+        return ""
+
+    platform = sys.platform if platform is None else platform
+
+    if platform == "darwin":
+        return (
+            "Install mpv with Homebrew:\n"
+            "  brew install mpv\n\n"
+            "More options: https://mpv.io/installation"
+        )
+
+    if platform.startswith("linux"):
+        return (
+            "Install mpv with your package manager:\n"
+            "  Debian/Ubuntu: sudo apt install mpv\n"
+            "  Fedora: sudo dnf install mpv\n"
+            "  Arch: sudo pacman -S mpv\n\n"
+            "More options: https://mpv.io/installation"
+        )
+
+    if platform == "win32":
+        return (
+            "Install mpv with WinGet:\n"
+            "  winget search mpv\n"
+            "  winget install <mpv-package-id>\n\n"
+            "More options: https://mpv.io/installation"
+        )
+
+    return "Install mpv from https://mpv.io/installation"
+
+
 class YouTubeClient:
-    def __init__(self, yt_dlp_bin: str = "yt-dlp", timeout_seconds: int = 45) -> None:
-        self.yt_dlp_bin = yt_dlp_bin
+    def __init__(self, timeout_seconds: int = 45) -> None:
         self.timeout_seconds = timeout_seconds
         self._search_cache: dict[tuple[str, int], list[Track]] = {}
 
@@ -59,23 +94,12 @@ class YouTubeClient:
             self._search_cache[cache_key] = tracks
             return list(tracks)
 
-        require_binary(self.yt_dlp_bin)
-        process = self._run(
-            [
-                self.yt_dlp_bin,
-                "--ignore-config",
-                "--quiet",
-                "--dump-single-json",
-                "--flat-playlist",
-                f"ytsearch{limit}:{query}",
-            ]
-        )
-        payload = _parse_json(process.stdout)
+        payload = self._extract_info(f"ytsearch{limit}:{query}", flat=True, playlist_end=limit)
         tracks = _parse_tracks(payload.get("entries"), source="search")
         if tracks:
             self._search_cache[cache_key] = tracks
             return tracks
-        raise YouTubeError(_best_error(process, fallback="No search results returned from YouTube."))
+        raise YouTubeError("No search results returned from YouTube.")
 
     def fetch_mix(self, track: Track, limit: int = DEFAULT_MIX_LIMIT) -> list[Track]:
         try:
@@ -85,20 +109,7 @@ class YouTubeClient:
         if tracks:
             return tracks
 
-        require_binary(self.yt_dlp_bin)
-        process = self._run(
-            [
-                self.yt_dlp_bin,
-                "--ignore-config",
-                "--quiet",
-                "--dump-single-json",
-                "--flat-playlist",
-                "--playlist-end",
-                str(limit + 1),
-                mix_url_for(track.video_id),
-            ]
-        )
-        payload = _parse_json(process.stdout)
+        payload = self._extract_info(mix_url_for(track.video_id), flat=True, playlist_end=limit + 1)
         tracks = _parse_tracks(
             payload.get("entries"),
             source="mix",
@@ -107,46 +118,14 @@ class YouTubeClient:
         )
         if tracks:
             return tracks
-        raise YouTubeError(_best_error(process, fallback="No similar tracks returned from YouTube mix."))
+        raise YouTubeError("No similar tracks returned from YouTube mix.")
 
     def resolve_stream_url(self, track: Track) -> str:
-        require_binary(self.yt_dlp_bin)
-        process = self._run(
-            [
-                self.yt_dlp_bin,
-                "--ignore-config",
-                "--quiet",
-                "--no-warnings",
-                "--no-playlist",
-                "-f",
-                "ba/b",
-                "--get-url",
-                track.watch_url,
-            ]
-        )
-
-        for line in process.stdout.splitlines():
-            value = line.strip()
-            if value.startswith("http://") or value.startswith("https://"):
-                return value
-
-        raise YouTubeError(_best_error(process, fallback="Could not resolve an audio stream URL."))
-
-    def _run(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        try:
-            return subprocess.run(
-                list(args),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.timeout_seconds,
-                check=False,
-            )
-        except FileNotFoundError as exc:
-            raise YouTubeError(str(exc)) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise YouTubeError("yt-dlp command timed out.") from exc
+        payload = self._extract_info(track.watch_url, format_selector="ba/b", no_playlist=True)
+        for candidate in _stream_url_candidates(payload):
+            if candidate.startswith(("http://", "https://")):
+                return candidate
+        raise YouTubeError("Could not resolve an audio stream URL.")
 
     def _search_fast(self, query: str, limit: int) -> list[Track]:
         html = self._fetch_html(search_url_for(query))
@@ -171,6 +150,43 @@ class YouTubeClient:
         except OSError as exc:
             raise YouTubeError(f"Could not fetch YouTube page: {exc}") from exc
 
+    def _extract_info(
+        self,
+        target: str,
+        *,
+        flat: bool = False,
+        format_selector: str | None = None,
+        no_playlist: bool = False,
+        playlist_end: int | None = None,
+    ) -> dict[str, Any]:
+        YoutubeDL, DownloadError = _load_yt_dlp()
+        options: dict[str, Any] = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "socket_timeout": self.timeout_seconds,
+        }
+        if flat:
+            options["extract_flat"] = True
+        if format_selector:
+            options["format"] = format_selector
+        if no_playlist:
+            options["noplaylist"] = True
+        if playlist_end is not None:
+            options["playlistend"] = playlist_end
+
+        try:
+            with YoutubeDL(options) as ydl:
+                payload = ydl.extract_info(target, download=False)
+        except DownloadError as exc:
+            raise YouTubeError(_clean_yt_dlp_error(str(exc), fallback="yt-dlp failed.")) from exc
+        except OSError as exc:
+            raise YouTubeError(f"yt-dlp failed: {exc}") from exc
+
+        if isinstance(payload, dict):
+            return payload
+        raise YouTubeError("yt-dlp returned invalid data.")
+
 
 def mix_url_for(video_id: str) -> str:
     return f"https://www.youtube.com/watch?v={video_id}&list=RD{video_id}"
@@ -179,16 +195,6 @@ def mix_url_for(video_id: str) -> str:
 def search_url_for(query: str) -> str:
     encoded = urllib.parse.quote_plus(query)
     return f"https://www.youtube.com/results?search_query={encoded}&sp=EgIQAQ%253D%253D"
-
-
-def _parse_json(output: str) -> dict[str, Any]:
-    text = output.strip()
-    if not text:
-        return {}
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise YouTubeError("yt-dlp returned invalid JSON output.") from exc
 
 
 def _parse_tracks(
@@ -429,16 +435,49 @@ def _coerce_duration(value: Any) -> int | None:
         return None
 
 
-def _best_error(process: subprocess.CompletedProcess[str], *, fallback: str) -> str:
-    stderr = process.stderr.strip()
-    stdout = process.stdout.strip()
+def _load_yt_dlp() -> tuple[type[Any], type[Exception]]:
+    try:
+        from yt_dlp import YoutubeDL
+        from yt_dlp.utils import DownloadError
+    except ModuleNotFoundError as exc:
+        raise YouTubeError("Python package 'yt-dlp' is not installed. Reinstall simpleplay with pip.") from exc
+    return YoutubeDL, DownloadError
 
-    for source in (stderr, stdout):
-        if source:
-            lines = [line.strip() for line in source.splitlines() if line.strip()]
-            if lines:
-                return lines[-1]
-    return fallback
+
+def _stream_url_candidates(payload: dict[str, Any]) -> Sequence[str]:
+    candidates: list[str] = []
+
+    requested_formats = payload.get("requested_formats")
+    if isinstance(requested_formats, list):
+        for item in requested_formats:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if url:
+                candidates.append(url)
+
+    requested_downloads = payload.get("requested_downloads")
+    if isinstance(requested_downloads, list):
+        for item in requested_downloads:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if url:
+                candidates.append(url)
+
+    for key in ("url", "manifest_url"):
+        url = str(payload.get(key) or "").strip()
+        if url:
+            candidates.append(url)
+
+    return candidates
+
+
+def _clean_yt_dlp_error(value: str, *, fallback: str) -> str:
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    if not lines:
+        return fallback
+    return lines[-1]
 
 
 def _normalize_query(value: str) -> str:

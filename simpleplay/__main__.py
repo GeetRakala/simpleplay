@@ -20,7 +20,6 @@ def main() -> int:
     initial_query = " ".join(args.query).strip()
 
     try:
-        require_binary("yt-dlp")
         require_binary("mpv")
         app = SimplePlayApp(initial_query=initial_query)
         app.run()
