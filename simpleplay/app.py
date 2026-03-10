@@ -22,6 +22,7 @@ class SimplePlayApp:
         self.player = MPVController(self.events)
 
         self.results: list[Track] = []
+        self.list_mode = "search"
         self.selected_index = 0
         self.list_offset = 0
         self.search_query = self.initial_query
@@ -157,10 +158,31 @@ class SimplePlayApp:
 
     def _play_selected(self) -> None:
         if not self.results:
-            self.status_message = "No search results to play."
+            self.status_message = self._empty_results_message()
             return
+        if self.list_mode == "queue":
+            self._play_selected_queue_track()
+            return
+
         track = self.results[self.selected_index]
+        self.list_mode = "queue"
         self._switch_track(track, add_previous_to_history=True, clear_forward=True, reset_queue=True)
+
+    def _play_selected_queue_track(self) -> None:
+        if not self.results:
+            self.status_message = "Up next is empty."
+            return
+
+        queue_tracks = list(self.up_next)
+        if not queue_tracks:
+            self.status_message = "Up next is empty."
+            return
+
+        selected_index = max(0, min(self.selected_index, len(queue_tracks) - 1))
+        chosen_track = queue_tracks.pop(selected_index)
+        reordered_queue = queue_tracks[selected_index:] + queue_tracks[:selected_index]
+        self.up_next = deque(reordered_queue)
+        self._switch_track(chosen_track, add_previous_to_history=True, clear_forward=True, reset_queue=False)
 
     def _toggle_pause(self) -> None:
         if not self.current_track:
@@ -274,6 +296,7 @@ class SimplePlayApp:
         self._start_related_prefetch(track)
         self._fill_queue_from_related(track)
         self._warm_queue_streams()
+        self._sync_queue_results()
 
     def _load_track(self, track: Track) -> None:
         cache = self.stream_cache.get(track.video_id)
@@ -364,6 +387,7 @@ class SimplePlayApp:
                 break
         if added:
             self._warm_queue_streams()
+            self._sync_queue_results()
 
     def _seen_video_ids(self) -> set[str]:
         seen = {track.video_id for track in self.history}
@@ -394,6 +418,7 @@ class SimplePlayApp:
             if event["token"] != self.search_token:
                 return
             self.loading_search = False
+            self.list_mode = "search"
             self.results = event["tracks"]
             self.selected_index = 0
             self.list_offset = 0
@@ -508,7 +533,7 @@ class SimplePlayApp:
 
     def _draw_results(self, stdscr: "curses._CursesWindow", top: int, height: int, width: int) -> None:
         if not self.results:
-            message = "No results yet."
+            message = self._empty_results_message()
             self._safe_addnstr(stdscr, top, 0, message, width)
             return
 
@@ -572,6 +597,37 @@ class SimplePlayApp:
         if self.current_track:
             return "playing"
         return "idle"
+
+    def _empty_results_message(self) -> str:
+        if self.list_mode == "queue":
+            if self.current_track and self.current_track.video_id in self.pending_related:
+                return "Loading up next..."
+            return "Up next is empty."
+        return "No results yet."
+
+    def _sync_queue_results(self) -> None:
+        if self.list_mode != "queue":
+            return
+
+        selected_video_id: str | None = None
+        if self.results and 0 <= self.selected_index < len(self.results):
+            selected_video_id = self.results[self.selected_index].video_id
+
+        self.results = list(self.up_next)
+        if not self.results:
+            self.selected_index = 0
+            self.list_offset = 0
+            return
+
+        if selected_video_id:
+            for index, track in enumerate(self.results):
+                if track.video_id == selected_video_id:
+                    self.selected_index = index
+                    break
+            else:
+                self.selected_index = 0
+        else:
+            self.selected_index = 0
 
     def _safe_addnstr(
         self,
