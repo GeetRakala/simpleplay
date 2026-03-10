@@ -2,6 +2,9 @@
 
 `simpleplay` is a terminal YouTube music player. It searches YouTube in a low-latency mode, plays audio-only through `mpv`, stops cleanly on `Ctrl+C`, keeps autoplaying similar songs from the current track's YouTube mix, and mirrors the queue into `mpv`'s internal playlist so next/previous controls stay in sync.
 
+## Caveat
+The entire thing is vibe-coded. Use at your own risk.
+
 ## Dependencies
 
 - `python3` 3.11+
