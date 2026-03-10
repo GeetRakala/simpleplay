@@ -91,6 +91,7 @@ class SimplePlayApp:
             self.should_exit = True
             return
         if key in (ord("/"),):
+            self.search_query = ""
             self.search_mode = True
             self.status_message = "Search mode."
             return
