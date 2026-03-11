@@ -477,7 +477,20 @@ def _clean_yt_dlp_error(value: str, *, fallback: str) -> str:
     lines = [line.strip() for line in value.splitlines() if line.strip()]
     if not lines:
         return fallback
-    return lines[-1]
+    message = lines[-1]
+    if message.lower().startswith("error:"):
+        message = message[6:].strip()
+    message = re.sub(r"^\[[^\]]+\]\s*", "", message).strip()
+    message = re.sub(r"^[A-Za-z0-9_-]{6,}:\s*", "", message).strip()
+
+    lowered = message.lower()
+    if any(
+        marker in lowered
+        for marker in ("video not found", "video unavailable", "this video is unavailable")
+    ):
+        return "Video is unavailable on YouTube."
+
+    return message or fallback
 
 
 def _normalize_query(value: str) -> str:

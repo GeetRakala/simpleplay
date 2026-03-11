@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from simpleplay.models import Track
-from simpleplay.youtube import YouTubeClient, install_hint_for_binary
+from simpleplay.youtube import YouTubeClient, _clean_yt_dlp_error, install_hint_for_binary
 
 
 SEARCH_HTML = """
@@ -155,3 +155,13 @@ class BinaryHintTests(unittest.TestCase):
 
         self.assertIn("winget search mpv", hint)
         self.assertIn("winget install <mpv-package-id>", hint)
+
+
+class ErrorCleanupTests(unittest.TestCase):
+    def test_unavailable_video_error_is_sanitized(self) -> None:
+        message = _clean_yt_dlp_error(
+            "ERROR: [youtube] abc123def45: Video unavailable. This video is unavailable",
+            fallback="yt-dlp failed.",
+        )
+
+        self.assertEqual(message, "Video is unavailable on YouTube.")

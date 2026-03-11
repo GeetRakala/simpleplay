@@ -582,8 +582,6 @@ class SimplePlayApp:
 
         if kind == "related-error":
             self.pending_related.discard(event["video_id"])
-            if self.current_track and self.current_track.video_id == event["video_id"]:
-                self.status_message = event["message"]
             return
 
         if kind == "stream-ready":

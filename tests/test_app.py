@@ -124,3 +124,22 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(app.current_track.video_id, "two")
         self.assertEqual(list(app.up_next), [first, third])
         self.assertEqual(app.results, [first, third])
+
+    def test_related_error_does_not_override_current_playback_status(self) -> None:
+        app = SimplePlayApp()
+        track = Track(video_id="abc123", title="Song")
+
+        app.current_track = track
+        app.status_message = "Playing: Song"
+        app.pending_related.add(track.video_id)
+
+        app._process_event(
+            {
+                "type": "related-error",
+                "video_id": track.video_id,
+                "message": "[ERROR] video not found",
+            }
+        )
+
+        self.assertEqual(app.status_message, "Playing: Song")
+        self.assertNotIn(track.video_id, app.pending_related)
