@@ -29,8 +29,8 @@ class MPVControllerTests(unittest.TestCase):
         commands: list[list[object]] = []
         controller.command = commands.append  # type: ignore[method-assign]
 
-        history = [Track(video_id="h1", title="History 1")]
-        up_next = [Track(video_id="n1", title="Next 1")]
+        history = [(Track(video_id="h1", title="History 1"), "https://example.com/history")]
+        up_next = [(Track(video_id="n1", title="Next 1"), "https://example.com/next")]
 
         controller.sync_playlist(history, up_next)
 
@@ -40,14 +40,14 @@ class MPVControllerTests(unittest.TestCase):
                 ["playlist-clear"],
                 [
                     "loadfile",
-                    "https://www.youtube.com/watch?v=h1",
+                    "https://example.com/history",
                     "insert-at",
                     0,
                     {"force-media-title": "History 1"},
                 ],
                 [
                     "loadfile",
-                    "https://www.youtube.com/watch?v=n1",
+                    "https://example.com/next",
                     "append",
                     -1,
                     {"force-media-title": "Next 1"},

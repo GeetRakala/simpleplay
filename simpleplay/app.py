@@ -383,8 +383,10 @@ class SimplePlayApp:
                 self.pending_play_video_id = None
             self.status_message = str(exc)
             return
+        self.stream_cache[track.video_id] = StreamCacheEntry(url=url)
         self.pending_play_video_id = None
         self.status_message = f"Playing: {track.title}"
+        self._sync_mpv_playlist()
 
     def _pop_next_track(self) -> Track | None:
         while self.up_next:
@@ -527,6 +529,7 @@ class SimplePlayApp:
         if added:
             self._warm_queue_streams()
             self._sync_queue_results()
+            self._sync_mpv_playlist()
             self._maybe_resume_autoplay()
 
     def _drop_track_from_queue(self, video_id: str) -> None:
@@ -606,6 +609,8 @@ class SimplePlayApp:
             self.stream_cache[video_id] = StreamCacheEntry(url=event["url"])
             if self.pending_play_video_id == video_id and self.current_track and self.current_track.video_id == video_id:
                 self._maybe_start_pending_playback()
+            elif self.current_track and not self.pending_play_video_id:
+                self._sync_mpv_playlist()
             return
 
         if kind == "stream-error":
@@ -615,6 +620,8 @@ class SimplePlayApp:
             if self.pending_play_video_id == video_id and self.current_track and self.current_track.video_id == video_id:
                 self.pending_play_video_id = None
                 self.status_message = event["message"]
+            elif self.current_track and not self.pending_play_video_id:
+                self._sync_mpv_playlist()
             return
 
         if kind == "player-event":
@@ -1022,28 +1029,69 @@ class SimplePlayApp:
         if not self.current_track or self.pending_play_video_id:
             return
 
-        self.playlist_tracks = self.history + [self.current_track] + list(self.up_next)
+        entries = self._mirrored_playlist_entries()
+        if entries is None:
+            self.playlist_tracks = []
+            return
+
+        history_entries, up_next_entries = entries
+        self.playlist_tracks = (
+            [track for track, _ in history_entries]
+            + [self.current_track]
+            + [track for track, _ in up_next_entries]
+        )
         self.ignore_playlist_pos_until = time.time() + 0.35
         try:
-            self.player.sync_playlist(self.history, list(self.up_next))
+            self.player.sync_playlist(history_entries, up_next_entries)
             self.player.set_media_title(self.current_track.title)
         except PlayerError as exc:
             self.status_message = str(exc)
+
+    def _mirrored_playlist_entries(
+        self,
+    ) -> tuple[list[tuple[Track, str]], list[tuple[Track, str]]] | None:
+        if not self.current_track:
+            return None
+
+        history_entries: list[tuple[Track, str]] = []
+        for track in self.history:
+            url = self._playlist_stream_url(track)
+            if not url:
+                return None
+            history_entries.append((track, url))
+
+        if not self._playlist_stream_url(self.current_track):
+            return None
+
+        up_next_entries: list[tuple[Track, str]] = []
+        for track in self.up_next:
+            url = self._playlist_stream_url(track)
+            if not url:
+                break
+            up_next_entries.append((track, url))
+        return history_entries, up_next_entries
+
+    def _playlist_stream_url(self, track: Track) -> str | None:
+        cache = self.stream_cache.get(track.video_id)
+        if not cache:
+            return None
+        return cache.url
 
     def _should_ignore_playlist_pos(self) -> bool:
         return time.time() < self.ignore_playlist_pos_until
 
     def _handle_playlist_position_change(self, index: int) -> None:
-        if index < 0 or index >= len(self.playlist_tracks):
+        logical_tracks = self.history + ([self.current_track] if self.current_track else []) + list(self.up_next)
+        if index < 0 or index >= len(self.playlist_tracks) or index >= len(logical_tracks):
             return
 
-        new_track = self.playlist_tracks[index]
+        new_track = logical_tracks[index]
         if self.current_track and new_track.video_id == self.current_track.video_id and index == len(self.history):
             return
 
-        self.history = self.playlist_tracks[:index]
+        self.history = logical_tracks[:index]
         self.current_track = new_track
-        self.up_next = deque(self.playlist_tracks[index + 1 :])
+        self.up_next = deque(logical_tracks[index + 1 :])
         self.forward_stack.clear()
         self.current_position = 0.0
         self.current_duration = float(new_track.duration) if new_track.duration is not None else None
@@ -1052,16 +1100,11 @@ class SimplePlayApp:
         self.awaiting_autoplay = False
         self.list_mode = "queue"
         self.status_message = f"Playing: {new_track.title}"
-        self.playlist_tracks = self.history + [self.current_track] + list(self.up_next)
         self._sync_queue_results()
         self._start_related_prefetch(new_track)
         self._fill_queue_from_related(new_track)
         self._warm_queue_streams()
-
-        try:
-            self.player.set_media_title(new_track.title)
-        except PlayerError as exc:
-            self.status_message = str(exc)
+        self._sync_mpv_playlist()
 
     def _maybe_resume_autoplay(self) -> None:
         if not self.awaiting_autoplay or not self.player_idle or not self.up_next:

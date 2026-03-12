@@ -96,23 +96,27 @@ class MPVController:
     def play_playlist_index(self, index: int) -> None:
         self.command(["playlist-play-index", index])
 
-    def sync_playlist(self, history: list[Track], up_next: list[Track]) -> None:
+    def sync_playlist(
+        self,
+        history: list[tuple[Track, str]],
+        up_next: list[tuple[Track, str]],
+    ) -> None:
         self.command(["playlist-clear"])
-        for index, track in enumerate(history):
+        for index, (track, url) in enumerate(history):
             self.command(
                 [
                     "loadfile",
-                    track.watch_url,
+                    url,
                     "insert-at",
                     index,
                     {"force-media-title": track.title},
                 ]
             )
-        for track in up_next:
+        for track, url in up_next:
             self.command(
                 [
                     "loadfile",
-                    track.watch_url,
+                    url,
                     "append",
                     -1,
                     {"force-media-title": track.title},

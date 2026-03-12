@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 - 2026-03-12
+
+- restore `mpv` next/previous controls by mirroring the resolved prefix of the queue back into `mpv`
+- keep `mpv` playlist navigation aligned with the app queue when unresolved tracks still exist later in the queue
+
 ## 0.1.2 - 2026-03-12
 
 - add vim-like volume control with `H` and `L`, plus live volume display in the header

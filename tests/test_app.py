@@ -99,15 +99,18 @@ class SimplePlayAppTests(unittest.TestCase):
         app = SimplePlayApp()
         track = Track(video_id="abc123", title="Song")
         loads: list[tuple[str, str | None]] = []
+        synced: list[bool] = []
 
         app.current_track = track
         app.pending_play_video_id = track.video_id
         app.stream_cache[track.video_id] = StreamCacheEntry(url="https://example.com/audio")
         app.player.load = lambda url, media_title=None: loads.append((url, media_title))  # type: ignore[method-assign]
+        app._sync_mpv_playlist = lambda: synced.append(True)  # type: ignore[method-assign]
 
         app._maybe_start_pending_playback()
 
         self.assertEqual(loads, [("https://example.com/audio", "Song")])
+        self.assertEqual(synced, [True])
         self.assertIsNone(app.pending_play_video_id)
         self.assertEqual(app.status_message, "Playing: Song")
 
@@ -231,3 +234,39 @@ class SimplePlayAppTests(unittest.TestCase):
         app._handle_player_payload({"event": "property-change", "name": "volume", "data": 72.0})
 
         self.assertEqual(app.volume, 72.0)
+
+    def test_sync_mpv_playlist_uses_resolved_queue_prefix(self) -> None:
+        app = SimplePlayApp()
+        history = Track(video_id="hist", title="History")
+        current = Track(video_id="now", title="Now")
+        first = Track(video_id="next1", title="Next 1")
+        second = Track(video_id="next2", title="Next 2")
+        synced: list[tuple[list[tuple[Track, str]], list[tuple[Track, str]]]] = []
+        titles: list[str] = []
+
+        app.history = [history]
+        app.current_track = current
+        app.up_next.extend([first, second])
+        app.stream_cache = {
+            history.video_id: StreamCacheEntry(url="https://example.com/history"),
+            current.video_id: StreamCacheEntry(url="https://example.com/current"),
+            first.video_id: StreamCacheEntry(url="https://example.com/next1"),
+        }
+        app.player.sync_playlist = lambda history_entries, up_next_entries: synced.append(  # type: ignore[method-assign]
+            (history_entries, up_next_entries)
+        )
+        app.player.set_media_title = lambda title: titles.append(title)  # type: ignore[method-assign]
+
+        app._sync_mpv_playlist()
+
+        self.assertEqual(app.playlist_tracks, [history, current, first])
+        self.assertEqual(
+            synced,
+            [
+                (
+                    [(history, "https://example.com/history")],
+                    [(first, "https://example.com/next1")],
+                )
+            ],
+        )
+        self.assertEqual(titles, ["Now"])

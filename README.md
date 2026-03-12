@@ -108,7 +108,7 @@ When a track starts, `simpleplay` immediately seeds `Up Next` from the current s
 - The only non-Python runtime dependency is `mpv`. `yt-dlp` is installed automatically as a Python package dependency.
 - If the Python `yt-dlp` module is missing, `simpleplay` falls back to the `yt-dlp` CLI when it is installed on your system.
 - `mpv` is kept alive as one long-running process and controlled over its IPC socket for better responsiveness.
-- Queue progression and autoplay are driven by the app over `mpv` IPC so playback stays on resolved audio stream URLs.
+- Queue progression and autoplay are driven by the app over `mpv` IPC, and the resolved prefix of the queue is mirrored into `mpv` so its next/previous controls stay usable.
 - Search uses a fast YouTube page parser first, with the bundled `yt-dlp` Python package as fallback when needed.
 - Direct audio stream URLs are cached briefly in memory because YouTube stream URLs expire.
 - The first few search results and queued tracks are prefetched in the background so selecting them is more likely to start from a cached direct audio URL.
