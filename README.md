@@ -1,6 +1,6 @@
 # simpleplay
 
-`simpleplay` is a terminal YouTube music player. It searches YouTube in a low-latency mode, plays audio-only through `mpv`, stops cleanly on `Ctrl+C`, keeps autoplaying similar songs from the current track's YouTube mix, and mirrors the queue into `mpv`'s internal playlist so next/previous controls stay in sync.
+`simpleplay` is a terminal YouTube music player. It searches YouTube in a low-latency mode, plays audio-only through `mpv`, stops cleanly on `Ctrl+C`, and keeps autoplaying similar songs from the current track's YouTube mix.
 
 ## Caveat
 The entire thing is vibe-coded. Use at your own risk.
@@ -58,6 +58,7 @@ pip install -e .
 ```
 
 If you do not want an editable install, you can still run the app directly with `python3 -m simpleplay`.
+For direct repo runs, `simpleplay` can use either the Python `yt-dlp` package or an installed `yt-dlp` binary.
 
 ## Run
 
@@ -90,6 +91,7 @@ python3 -m simpleplay "khruangbin"
 - after playback starts, the main list becomes `Up Next`, and `Enter` on a queued item jumps to it
 - `space` or `p` pause or resume
 - `h` / `l` seek backward or forward 10 seconds
+- `H` / `L` lower or raise volume by 5%
 - `n` play the next queued or similar track
 - `b` go to the previous track, or restart the current track if more than 5 seconds in
 - `r` cycle loop mode: `off` -> `all` -> `one`
@@ -104,12 +106,12 @@ When a track starts, `simpleplay` immediately seeds `Up Next` from the current s
 ## Notes
 
 - The only non-Python runtime dependency is `mpv`. `yt-dlp` is installed automatically as a Python package dependency.
+- If the Python `yt-dlp` module is missing, `simpleplay` falls back to the `yt-dlp` CLI when it is installed on your system.
 - `mpv` is kept alive as one long-running process and controlled over its IPC socket for better responsiveness.
-- The app keeps its queue mirrored into `mpv`'s internal playlist, so `mpv`'s own next/previous controls can move through the same queue.
+- Queue progression and autoplay are driven by the app over `mpv` IPC so playback stays on resolved audio stream URLs.
 - Search uses a fast YouTube page parser first, with the bundled `yt-dlp` Python package as fallback when needed.
 - Direct audio stream URLs are cached briefly in memory because YouTube stream URLs expire.
 - The first few search results and queued tracks are prefetched in the background so selecting them is more likely to start from a cached direct audio URL.
-- Playback start prefers a prefetched direct audio URL for a short grace window, then falls back to `mpv` loading the YouTube watch URL directly if the resolver is not ready yet.
 - If `yt-dlp` starts failing on some videos due to YouTube extractor changes, update it first.
 
 ## Commands

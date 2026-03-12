@@ -79,6 +79,7 @@ class MPVController:
         self._observe("duration", 3)
         self._observe("pause", 4)
         self._observe("playlist-pos", 5)
+        self._observe("volume", 6)
 
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
@@ -123,6 +124,9 @@ class MPVController:
 
     def seek(self, seconds: int) -> None:
         self.command(["seek", seconds, "relative"])
+
+    def change_volume(self, delta: int) -> None:
+        self.command(["add", "volume", delta])
 
     def stop(self) -> None:
         self.command(["stop"])

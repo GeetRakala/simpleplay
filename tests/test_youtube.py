@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from simpleplay.models import Track
-from simpleplay.youtube import YouTubeClient, _clean_yt_dlp_error, install_hint_for_binary
+from simpleplay.youtube import YouTubeClient, YouTubeError, _clean_yt_dlp_error, install_hint_for_binary
 
 
 SEARCH_HTML = """
@@ -136,6 +137,79 @@ class YouTubeClientTests(unittest.TestCase):
 
         self.assertEqual(url, "https://cdn.example.com/audio")
 
+    def test_extract_info_uses_silent_logger_and_no_progress(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeDownloadError(Exception):
+            pass
+
+        class FakeYoutubeDL:
+            def __init__(self, options: dict[str, object]) -> None:
+                captured.update(options)
+
+            def __enter__(self) -> "FakeYoutubeDL":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def extract_info(self, target: str, download: bool = False) -> dict[str, str]:
+                return {"url": "https://cdn.example.com/audio"}
+
+        with mock.patch(
+            "simpleplay.youtube._load_yt_dlp",
+            return_value=(FakeYoutubeDL, FakeDownloadError),
+        ):
+            client = YouTubeClient()
+            payload = client._extract_info("https://www.youtube.com/watch?v=abc123")
+
+        logger = captured.get("logger")
+        self.assertEqual(payload["url"], "https://cdn.example.com/audio")
+        self.assertTrue(captured["quiet"])
+        self.assertTrue(captured["no_warnings"])
+        self.assertTrue(captured["noprogress"])
+        self.assertIsNotNone(logger)
+        self.assertTrue(hasattr(logger, "error"))
+
+    def test_extract_info_falls_back_to_yt_dlp_binary_when_python_package_missing(self) -> None:
+        completed = mock.Mock(returncode=0, stdout='{"url": "https://cdn.example.com/audio"}', stderr="")
+
+        with mock.patch("simpleplay.youtube._load_yt_dlp", side_effect=YouTubeError("missing module")):
+            with mock.patch("simpleplay.youtube.require_binary") as require_binary:
+                with mock.patch("simpleplay.youtube.subprocess.run", return_value=completed) as run:
+                    client = YouTubeClient(timeout_seconds=12)
+                    payload = client._extract_info(
+                        "https://www.youtube.com/watch?v=abc123",
+                        format_selector="ba/b",
+                        no_playlist=True,
+                    )
+
+        self.assertEqual(payload["url"], "https://cdn.example.com/audio")
+        require_binary.assert_called_once_with("yt-dlp")
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        self.assertIn("--dump-single-json", command)
+        self.assertIn("--format", command)
+        self.assertIn("ba/b", command)
+        self.assertIn("--no-playlist", command)
+        self.assertIn("--no-progress", command)
+        self.assertEqual(command[-1], "https://www.youtube.com/watch?v=abc123")
+
+    def test_extract_info_binary_failure_is_sanitized(self) -> None:
+        completed = mock.Mock(
+            returncode=1,
+            stdout="",
+            stderr="ERROR: [youtube] abc123def45: Video unavailable. This video is unavailable",
+        )
+
+        with mock.patch("simpleplay.youtube._load_yt_dlp", side_effect=YouTubeError("missing module")):
+            with mock.patch("simpleplay.youtube.require_binary"):
+                with mock.patch("simpleplay.youtube.subprocess.run", return_value=completed):
+                    client = YouTubeClient()
+
+                    with self.assertRaisesRegex(YouTubeError, "Video is unavailable on YouTube."):
+                        client._extract_info("https://www.youtube.com/watch?v=abc123")
+
 
 class BinaryHintTests(unittest.TestCase):
     def test_macos_mpv_hint_mentions_homebrew(self) -> None:
@@ -155,6 +229,11 @@ class BinaryHintTests(unittest.TestCase):
 
         self.assertIn("winget search mpv", hint)
         self.assertIn("winget install <mpv-package-id>", hint)
+
+    def test_macos_yt_dlp_hint_mentions_homebrew(self) -> None:
+        hint = install_hint_for_binary("yt-dlp", platform="darwin")
+
+        self.assertIn("brew install yt-dlp", hint)
 
 
 class ErrorCleanupTests(unittest.TestCase):

@@ -54,3 +54,12 @@ class MPVControllerTests(unittest.TestCase):
                 ],
             ],
         )
+
+    def test_change_volume_sends_relative_volume_command(self) -> None:
+        controller = MPVController(queue.Queue())
+        commands: list[list[object]] = []
+        controller.command = commands.append  # type: ignore[method-assign]
+
+        controller.change_volume(5)
+
+        self.assertEqual(commands, [["add", "volume", 5]])

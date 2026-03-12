@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import subprocess
 import sys
 import urllib.parse
 import urllib.request
@@ -32,6 +33,17 @@ class YouTubeError(RuntimeError):
     pass
 
 
+class _SilentYtDlpLogger:
+    def debug(self, message: str) -> None:
+        return
+
+    def warning(self, message: str) -> None:
+        return
+
+    def error(self, message: str) -> None:
+        return
+
+
 def require_binary(name: str) -> None:
     if shutil.which(name):
         return
@@ -42,10 +54,36 @@ def require_binary(name: str) -> None:
 
 
 def install_hint_for_binary(name: str, platform: str | None = None) -> str:
+    platform = sys.platform if platform is None else platform
+
+    if name == "yt-dlp":
+        if platform == "darwin":
+            return (
+                "Install yt-dlp with Homebrew:\n"
+                "  brew install yt-dlp\n\n"
+                "More options: https://github.com/yt-dlp/yt-dlp/wiki/Installation"
+            )
+
+        if platform.startswith("linux"):
+            return (
+                "Install yt-dlp with your package manager:\n"
+                "  Debian/Ubuntu: sudo apt install yt-dlp\n"
+                "  Fedora: sudo dnf install yt-dlp\n"
+                "  Arch: sudo pacman -S yt-dlp\n\n"
+                "More options: https://github.com/yt-dlp/yt-dlp/wiki/Installation"
+            )
+
+        if platform == "win32":
+            return (
+                "Install yt-dlp with WinGet:\n"
+                "  winget install yt-dlp.yt-dlp\n\n"
+                "More options: https://github.com/yt-dlp/yt-dlp/wiki/Installation"
+            )
+
+        return "Install yt-dlp from https://github.com/yt-dlp/yt-dlp/wiki/Installation"
+
     if name != "mpv":
         return ""
-
-    platform = sys.platform if platform is None else platform
 
     if platform == "darwin":
         return (
@@ -159,8 +197,41 @@ class YouTubeClient:
         no_playlist: bool = False,
         playlist_end: int | None = None,
     ) -> dict[str, Any]:
-        YoutubeDL, DownloadError = _load_yt_dlp()
+        try:
+            YoutubeDL, DownloadError = _load_yt_dlp()
+        except YouTubeError:
+            return self._extract_info_with_binary(
+                target,
+                flat=flat,
+                format_selector=format_selector,
+                no_playlist=no_playlist,
+                playlist_end=playlist_end,
+            )
+
+        return self._extract_info_with_python(
+            YoutubeDL,
+            DownloadError,
+            target,
+            flat=flat,
+            format_selector=format_selector,
+            no_playlist=no_playlist,
+            playlist_end=playlist_end,
+        )
+
+    def _extract_info_with_python(
+        self,
+        YoutubeDL: type[Any],
+        DownloadError: type[Exception],
+        target: str,
+        *,
+        flat: bool = False,
+        format_selector: str | None = None,
+        no_playlist: bool = False,
+        playlist_end: int | None = None,
+    ) -> dict[str, Any]:
         options: dict[str, Any] = {
+            "logger": _SilentYtDlpLogger(),
+            "noprogress": True,
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -182,6 +253,63 @@ class YouTubeClient:
             raise YouTubeError(_clean_yt_dlp_error(str(exc), fallback="yt-dlp failed.")) from exc
         except OSError as exc:
             raise YouTubeError(f"yt-dlp failed: {exc}") from exc
+
+        if isinstance(payload, dict):
+            return payload
+        raise YouTubeError("yt-dlp returned invalid data.")
+
+    def _extract_info_with_binary(
+        self,
+        target: str,
+        *,
+        flat: bool = False,
+        format_selector: str | None = None,
+        no_playlist: bool = False,
+        playlist_end: int | None = None,
+    ) -> dict[str, Any]:
+        require_binary("yt-dlp")
+
+        command = [
+            "yt-dlp",
+            "--dump-single-json",
+            "--quiet",
+            "--no-warnings",
+            "--skip-download",
+            "--no-progress",
+            "--socket-timeout",
+            str(self.timeout_seconds),
+        ]
+        if flat:
+            command.append("--flat-playlist")
+        if format_selector:
+            command.extend(["--format", format_selector])
+        if no_playlist:
+            command.append("--no-playlist")
+        if playlist_end is not None:
+            command.extend(["--playlist-end", str(playlist_end)])
+        command.append(target)
+
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds + 5,
+                check=False,
+            )
+        except OSError as exc:
+            raise YouTubeError(f"yt-dlp failed: {exc}") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise YouTubeError("yt-dlp timed out.") from exc
+
+        if completed.returncode != 0:
+            message = completed.stderr.strip() or completed.stdout.strip()
+            raise YouTubeError(_clean_yt_dlp_error(message, fallback="yt-dlp failed."))
+
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise YouTubeError("yt-dlp returned invalid data.") from exc
 
         if isinstance(payload, dict):
             return payload

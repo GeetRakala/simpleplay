@@ -58,7 +58,31 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertFalse(app.search_mode)
         self.assertEqual(started, [])
 
-    def test_load_track_starts_pending_playback_before_watch_url_fallback(self) -> None:
+    def test_uppercase_h_lowers_volume(self) -> None:
+        app = SimplePlayApp()
+        changes: list[int] = []
+
+        app.player.change_volume = lambda delta: changes.append(delta)  # type: ignore[method-assign]
+
+        app._handle_key(ord("H"))
+
+        self.assertEqual(changes, [-5])
+        self.assertEqual(app.volume, 95.0)
+        self.assertEqual(app.status_message, "Volume: 95%")
+
+    def test_uppercase_l_raises_volume(self) -> None:
+        app = SimplePlayApp()
+        changes: list[int] = []
+
+        app.player.change_volume = lambda delta: changes.append(delta)  # type: ignore[method-assign]
+
+        app._handle_key(ord("L"))
+
+        self.assertEqual(changes, [5])
+        self.assertEqual(app.volume, 105.0)
+        self.assertEqual(app.status_message, "Volume: 105%")
+
+    def test_load_track_starts_pending_playback_before_stream_resolve(self) -> None:
         app = SimplePlayApp()
         track = Track(video_id="abc123", title="Song")
         resolved: list[str] = []
@@ -80,7 +104,6 @@ class SimplePlayAppTests(unittest.TestCase):
         app.pending_play_video_id = track.video_id
         app.stream_cache[track.video_id] = StreamCacheEntry(url="https://example.com/audio")
         app.player.load = lambda url, media_title=None: loads.append((url, media_title))  # type: ignore[method-assign]
-        app._sync_mpv_playlist = lambda: None  # type: ignore[method-assign]
 
         app._maybe_start_pending_playback()
 
@@ -88,22 +111,21 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertIsNone(app.pending_play_video_id)
         self.assertEqual(app.status_message, "Playing: Song")
 
-    def test_pending_playback_falls_back_to_watch_url_after_grace_period(self) -> None:
+    def test_pending_playback_waits_for_resolved_stream_url(self) -> None:
         app = SimplePlayApp()
         track = Track(video_id="abc123", title="Song")
         loads: list[tuple[str, str | None]] = []
 
         app.current_track = track
         app.pending_play_video_id = track.video_id
-        app.pending_play_fallback_at = 0.0
+        app.status_message = "Loading: Song"
         app.player.load = lambda url, media_title=None: loads.append((url, media_title))  # type: ignore[method-assign]
-        app._sync_mpv_playlist = lambda: None  # type: ignore[method-assign]
 
         app._maybe_start_pending_playback()
 
-        self.assertEqual(loads, [(track.watch_url, "Song")])
-        self.assertIsNone(app.pending_play_video_id)
-        self.assertEqual(app.status_message, "Playing: Song")
+        self.assertEqual(loads, [])
+        self.assertEqual(app.pending_play_video_id, track.video_id)
+        self.assertEqual(app.status_message, "Loading: Song")
 
     def test_play_selected_seeds_queue_from_search_results(self) -> None:
         app = SimplePlayApp()
@@ -143,3 +165,69 @@ class SimplePlayAppTests(unittest.TestCase):
 
         self.assertEqual(app.status_message, "Playing: Song")
         self.assertNotIn(track.video_id, app.pending_related)
+
+    def test_stream_error_for_current_track_clears_pending_playback_and_surfaces_message(self) -> None:
+        app = SimplePlayApp()
+        track = Track(video_id="abc123", title="Song")
+        loads: list[tuple[str, str | None]] = []
+
+        app.current_track = track
+        app.pending_play_video_id = track.video_id
+        app.player.load = lambda url, media_title=None: loads.append((url, media_title))  # type: ignore[method-assign]
+
+        app._process_event(
+            {
+                "type": "stream-error",
+                "video_id": track.video_id,
+                "message": "Video is unavailable on YouTube.",
+            }
+        )
+
+        self.assertEqual(loads, [])
+        self.assertIsNone(app.pending_play_video_id)
+        self.assertEqual(app.status_message, "Video is unavailable on YouTube.")
+
+    def test_stream_error_removes_unplayable_track_from_queue(self) -> None:
+        app = SimplePlayApp()
+        current = Track(video_id="now", title="Now")
+        broken = Track(video_id="bad", title="Broken")
+        healthy = Track(video_id="good", title="Healthy")
+
+        app.current_track = current
+        app.list_mode = "queue"
+        app.up_next.extend([broken, healthy])
+        app.results = [broken, healthy]
+
+        app._process_event(
+            {
+                "type": "stream-error",
+                "video_id": broken.video_id,
+                "message": "Video is unavailable on YouTube.",
+            }
+        )
+
+        self.assertEqual([track.video_id for track in app.up_next], ["good"])
+        self.assertEqual([track.video_id for track in app.results], ["good"])
+
+    def test_core_idle_change_resumes_autoplay_when_waiting(self) -> None:
+        app = SimplePlayApp()
+        current = Track(video_id="now", title="Now")
+        healthy = Track(video_id="good", title="Healthy")
+        resumed: list[bool] = []
+
+        app.current_track = current
+        app.awaiting_autoplay = True
+        app.player_idle = False
+        app.up_next.append(healthy)
+        app._play_next = lambda *, auto: resumed.append(auto)  # type: ignore[method-assign]
+
+        app._handle_player_payload({"event": "property-change", "name": "core-idle", "data": True})
+
+        self.assertEqual(resumed, [True])
+
+    def test_volume_property_change_updates_state(self) -> None:
+        app = SimplePlayApp()
+
+        app._handle_player_payload({"event": "property-change", "name": "volume", "data": 72.0})
+
+        self.assertEqual(app.volume, 72.0)

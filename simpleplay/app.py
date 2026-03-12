@@ -12,7 +12,7 @@ from .player import MPVController, PlayerError
 from .youtube import DEFAULT_MIX_LIMIT, DEFAULT_SEARCH_LIMIT, YouTubeClient, YouTubeError
 
 
-HELP_TEXT = "j/k move  Enter play  / search  space/p pause  h/l seek  n next  b prev  r loop  q quit"
+HELP_TEXT = "j/k move  Enter play  / search  space/p pause  h/l seek  H/L volume  n next  b prev  r loop  q quit"
 INTRO_TEXT = "Minimal terminal playback for YouTube music."
 COLOR_PRIMARY = 1
 COLOR_ACCENT = 2
@@ -25,7 +25,6 @@ COLOR_PROGRESS_EMPTY = 8
 SEARCH_PREFETCH_COUNT = 4
 SEARCH_QUEUE_SEED_LIMIT = 8
 SEARCH_DEBOUNCE_SECONDS = 0.25
-PLAYBACK_RESOLVE_GRACE_SECONDS = 1.0
 
 
 class SimplePlayApp:
@@ -43,13 +42,13 @@ class SimplePlayApp:
         self.search_mode = False
         self.loading_search = False
         self.pending_play_video_id: str | None = None
-        self.pending_play_fallback_at = 0.0
         self.status_message = INTRO_TEXT
 
         self.current_track: Track | None = None
         self.current_position = 0.0
         self.current_duration: float | None = None
         self.paused = False
+        self.volume = 100.0
         self.loop_mode = LoopMode.OFF
 
         self.history: list[Track] = []
@@ -154,6 +153,12 @@ class SimplePlayApp:
         if key == ord("l"):
             self._seek(10)
             return
+        if key == ord("H"):
+            self._adjust_volume(-5)
+            return
+        if key == ord("L"):
+            self._adjust_volume(5)
+            return
         if key == ord("n"):
             self._play_next(auto=False)
             return
@@ -252,6 +257,16 @@ class SimplePlayApp:
             self.status_message = f"Seeked {seconds:+d}s"
         except PlayerError as exc:
             self.status_message = str(exc)
+
+    def _adjust_volume(self, delta: int) -> None:
+        try:
+            self.player.change_volume(delta)
+        except PlayerError as exc:
+            self.status_message = str(exc)
+            return
+
+        self.volume = max(0.0, self.volume + delta)
+        self.status_message = f"Volume: {round(self.volume)}%"
 
     def _play_previous(self) -> None:
         if self.current_position > 5 and self.current_track:
@@ -357,7 +372,6 @@ class SimplePlayApp:
             return
 
         self.pending_play_video_id = track.video_id
-        self.pending_play_fallback_at = time.time() + PLAYBACK_RESOLVE_GRACE_SECONDS
         self.status_message = f"Loading: {track.title}"
         self._start_stream_resolve(track)
 
@@ -367,13 +381,10 @@ class SimplePlayApp:
         except PlayerError as exc:
             if self.pending_play_video_id == track.video_id:
                 self.pending_play_video_id = None
-                self.pending_play_fallback_at = 0.0
             self.status_message = str(exc)
             return
         self.pending_play_video_id = None
-        self.pending_play_fallback_at = 0.0
         self.status_message = f"Playing: {track.title}"
-        self._sync_mpv_playlist()
 
     def _pop_next_track(self) -> Track | None:
         while self.up_next:
@@ -432,17 +443,12 @@ class SimplePlayApp:
             return
         if self.current_track.video_id != self.pending_play_video_id:
             self.pending_play_video_id = None
-            self.pending_play_fallback_at = 0.0
             return
 
         cache = self.stream_cache.get(self.current_track.video_id)
         if cache and cache.is_fresh():
             self._start_playback(self.current_track, cache.url)
-            return
-
-        if time.time() < self.pending_play_fallback_at:
-            return
-        self._start_playback(self.current_track, self.current_track.watch_url)
+        return
 
     def _prime_search_results(self, tracks: Iterable[Track]) -> None:
         for track in list(tracks)[:SEARCH_PREFETCH_COUNT]:
@@ -521,8 +527,18 @@ class SimplePlayApp:
         if added:
             self._warm_queue_streams()
             self._sync_queue_results()
-            self._sync_mpv_playlist()
             self._maybe_resume_autoplay()
+
+    def _drop_track_from_queue(self, video_id: str) -> None:
+        if not self.up_next:
+            return
+
+        filtered = [track for track in self.up_next if track.video_id != video_id]
+        if len(filtered) == len(self.up_next):
+            return
+
+        self.up_next = deque(filtered)
+        self._sync_queue_results()
 
     def _seen_video_ids(self) -> set[str]:
         seen = {track.video_id for track in self.history}
@@ -595,9 +611,10 @@ class SimplePlayApp:
         if kind == "stream-error":
             video_id = event["video_id"]
             self.pending_streams.discard(video_id)
+            self._drop_track_from_queue(video_id)
             if self.pending_play_video_id == video_id and self.current_track and self.current_track.video_id == video_id:
-                self.pending_play_fallback_at = 0.0
-                self._maybe_start_pending_playback()
+                self.pending_play_video_id = None
+                self.status_message = event["message"]
             return
 
         if kind == "player-event":
@@ -617,10 +634,14 @@ class SimplePlayApp:
                 self.paused = bool(data)
             elif name == "core-idle":
                 self.player_idle = bool(data)
+                self._maybe_resume_autoplay()
             elif name == "time-pos":
                 self.current_position = float(data or 0.0)
             elif name == "duration":
                 self.current_duration = None if data is None else float(data)
+            elif name == "volume":
+                if data is not None:
+                    self.volume = float(data)
             elif name == "playlist-pos":
                 if self._should_ignore_playlist_pos():
                     return
@@ -828,6 +849,7 @@ class SimplePlayApp:
         self._safe_addnstr(stdscr, y, 0, "simpleplay", width, self._header_attr())
 
         state_parts = [self._player_state_label()]
+        state_parts.append(f"vol {round(self.volume)}%")
         if self.loop_mode is not LoopMode.OFF:
             state_parts.append(f"loop {self.loop_mode.value}")
         if self.loading_search:
@@ -936,7 +958,7 @@ class SimplePlayApp:
     def _secondary_status_attr(self) -> int:
         if self.status_message.startswith(("No ", "Could not", "Required ", "mpv ", "Queue ended")):
             return self._error_attr(curses.A_BOLD)
-        if self.status_message.startswith(("Loading:", "Searching")):
+        if self.status_message.startswith(("Loading:", "Searching", "Volume:")):
             return self._accent_attr(curses.A_BOLD)
         return self._muted_attr()
 
@@ -1027,7 +1049,6 @@ class SimplePlayApp:
         self.current_duration = float(new_track.duration) if new_track.duration is not None else None
         self.paused = False
         self.pending_play_video_id = None
-        self.pending_play_fallback_at = 0.0
         self.awaiting_autoplay = False
         self.list_mode = "queue"
         self.status_message = f"Playing: {new_track.title}"
@@ -1045,12 +1066,5 @@ class SimplePlayApp:
     def _maybe_resume_autoplay(self) -> None:
         if not self.awaiting_autoplay or not self.player_idle or not self.up_next:
             return
-        next_index = len(self.history) + 1
-        if next_index >= len(self.playlist_tracks):
-            self.playlist_tracks = self.history + ([self.current_track] if self.current_track else []) + list(self.up_next)
-        try:
-            self.player.play_playlist_index(len(self.history) + 1)
-        except PlayerError as exc:
-            self.status_message = str(exc)
-            return
         self.awaiting_autoplay = False
+        self._play_next(auto=True)
