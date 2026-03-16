@@ -27,7 +27,7 @@ SEARCH_QUEUE_SEED_LIMIT = 8
 SEARCH_DEBOUNCE_SECONDS = 0.25
 
 
-class SimplePlayApp:
+class TsetseApp:
     def __init__(self, initial_query: str = "") -> None:
         self.initial_query = initial_query.strip()
         self.events: "queue.Queue[dict]" = queue.Queue()
@@ -853,7 +853,7 @@ class SimplePlayApp:
         self._safe_addnstr(stdscr, y, x, f" {duration}", width, self._muted_attr())
 
     def _draw_header(self, stdscr: "curses._CursesWindow", y: int, width: int) -> None:
-        self._safe_addnstr(stdscr, y, 0, "simpleplay", width, self._header_attr())
+        self._safe_addnstr(stdscr, y, 0, "tsetse", width, self._header_attr())
 
         state_parts = [self._player_state_label()]
         state_parts.append(f"vol {round(self.volume)}%")

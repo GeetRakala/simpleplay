@@ -3,8 +3,8 @@ from __future__ import annotations
 import queue
 import unittest
 
-from simpleplay.models import Track
-from simpleplay.player import MPVController
+from tsetse.models import Track
+from tsetse.player import MPVController
 
 
 class MPVControllerTests(unittest.TestCase):

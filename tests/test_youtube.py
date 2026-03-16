@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from simpleplay.models import Track
-from simpleplay.youtube import YouTubeClient, YouTubeError, _clean_yt_dlp_error, install_hint_for_binary
+from tsetse.models import Track
+from tsetse.youtube import YouTubeClient, YouTubeError, _clean_yt_dlp_error, install_hint_for_binary
 
 
 SEARCH_HTML = """
@@ -157,7 +157,7 @@ class YouTubeClientTests(unittest.TestCase):
                 return {"url": "https://cdn.example.com/audio"}
 
         with mock.patch(
-            "simpleplay.youtube._load_yt_dlp",
+            "tsetse.youtube._load_yt_dlp",
             return_value=(FakeYoutubeDL, FakeDownloadError),
         ):
             client = YouTubeClient()
@@ -174,9 +174,9 @@ class YouTubeClientTests(unittest.TestCase):
     def test_extract_info_falls_back_to_yt_dlp_binary_when_python_package_missing(self) -> None:
         completed = mock.Mock(returncode=0, stdout='{"url": "https://cdn.example.com/audio"}', stderr="")
 
-        with mock.patch("simpleplay.youtube._load_yt_dlp", side_effect=YouTubeError("missing module")):
-            with mock.patch("simpleplay.youtube.require_binary") as require_binary:
-                with mock.patch("simpleplay.youtube.subprocess.run", return_value=completed) as run:
+        with mock.patch("tsetse.youtube._load_yt_dlp", side_effect=YouTubeError("missing module")):
+            with mock.patch("tsetse.youtube.require_binary") as require_binary:
+                with mock.patch("tsetse.youtube.subprocess.run", return_value=completed) as run:
                     client = YouTubeClient(timeout_seconds=12)
                     payload = client._extract_info(
                         "https://www.youtube.com/watch?v=abc123",
@@ -202,9 +202,9 @@ class YouTubeClientTests(unittest.TestCase):
             stderr="ERROR: [youtube] abc123def45: Video unavailable. This video is unavailable",
         )
 
-        with mock.patch("simpleplay.youtube._load_yt_dlp", side_effect=YouTubeError("missing module")):
-            with mock.patch("simpleplay.youtube.require_binary"):
-                with mock.patch("simpleplay.youtube.subprocess.run", return_value=completed):
+        with mock.patch("tsetse.youtube._load_yt_dlp", side_effect=YouTubeError("missing module")):
+            with mock.patch("tsetse.youtube.require_binary"):
+                with mock.patch("tsetse.youtube.subprocess.run", return_value=completed):
                     client = YouTubeClient()
 
                     with self.assertRaisesRegex(YouTubeError, "Video is unavailable on YouTube."):

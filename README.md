@@ -1,6 +1,6 @@
-# simpleplay
+# tsetse
 
-`simpleplay` is a terminal YouTube music player. It searches YouTube in a low-latency mode, plays audio-only through `mpv`, stops cleanly on `Ctrl+C`, and keeps autoplaying similar songs from the current track's YouTube mix.
+`tsetse` is a terminal YouTube music player. It searches YouTube in a low-latency mode, plays audio-only through `mpv`, stops cleanly on `Ctrl+C`, and keeps autoplaying similar songs from the current track's YouTube mix.
 
 ## Caveat
 The entire thing is vibe-coded. Use at your own risk.
@@ -20,7 +20,7 @@ Optional:
 From PyPI:
 
 ```bash
-pip install simpleplay
+pip install tsetse
 ```
 
 `pip` installs the Python `yt-dlp` dependency automatically. `mpv` is still a separate system binary, so `pip` cannot install it for you.
@@ -57,27 +57,27 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-If you do not want an editable install, you can still run the app directly with `python3 -m simpleplay`.
-For direct repo runs, `simpleplay` can use either the Python `yt-dlp` package or an installed `yt-dlp` binary.
+If you do not want an editable install, you can still run the app directly with `python3 -m tsetse`.
+For direct repo runs, `tsetse` can use either the Python `yt-dlp` package or an installed `yt-dlp` binary.
 
 ## Run
 
 Start the UI with no query:
 
 ```bash
-simpleplay
+tsetse
 ```
 
 Start with an initial search:
 
 ```bash
-simpleplay "daft punk"
+tsetse "daft punk"
 ```
 
 Without installing:
 
 ```bash
-python3 -m simpleplay "khruangbin"
+python3 -m tsetse "khruangbin"
 ```
 
 ## Keybindings
@@ -101,12 +101,12 @@ python3 -m simpleplay "khruangbin"
 
 ## How autoplay works
 
-When a track starts, `simpleplay` immediately seeds `Up Next` from the current search results so the queue is usable right away. In parallel, it asks YouTube for the current video's mix playlist (`list=RD<video_id>`). Those related tracks are added to the in-memory queue, shown in the `Up Next` list, and the next few are prefetched for faster transitions.
+When a track starts, `tsetse` immediately seeds `Up Next` from the current search results so the queue is usable right away. In parallel, it asks YouTube for the current video's mix playlist (`list=RD<video_id>`). Those related tracks are added to the in-memory queue, shown in the `Up Next` list, and the next few are prefetched for faster transitions.
 
 ## Notes
 
 - The only non-Python runtime dependency is `mpv`. `yt-dlp` is installed automatically as a Python package dependency.
-- If the Python `yt-dlp` module is missing, `simpleplay` falls back to the `yt-dlp` CLI when it is installed on your system.
+- If the Python `yt-dlp` module is missing, `tsetse` falls back to the `yt-dlp` CLI when it is installed on your system.
 - `mpv` is kept alive as one long-running process and controlled over its IPC socket for better responsiveness.
 - Queue progression and autoplay are driven by the app over `mpv` IPC, and the resolved prefix of the queue is mirrored into `mpv` so its next/previous controls stay usable.
 - Search uses a fast YouTube page parser first, with the bundled `yt-dlp` Python package as fallback when needed.

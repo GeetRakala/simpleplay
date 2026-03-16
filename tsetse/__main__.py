@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .app import SimplePlayApp
+from .app import TsetseApp
 from .player import PlayerError
 from .youtube import YouTubeError, require_binary
 
@@ -21,12 +21,12 @@ def main() -> int:
 
     try:
         require_binary("mpv")
-        app = SimplePlayApp(initial_query=initial_query)
+        app = TsetseApp(initial_query=initial_query)
         app.run()
     except KeyboardInterrupt:
         return 0
     except (YouTubeError, PlayerError) as exc:
-        print(f"simpleplay: {exc}", file=sys.stderr)
+        print(f"tsetse: {exc}", file=sys.stderr)
         return 1
     return 0
 

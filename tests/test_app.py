@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import unittest
 
-from simpleplay.app import SimplePlayApp
-from simpleplay.models import StreamCacheEntry, Track
+from tsetse.app import TsetseApp
+from tsetse.models import StreamCacheEntry, Track
 
 
-class SimplePlayAppTests(unittest.TestCase):
+class TsetseAppTests(unittest.TestCase):
     def test_starts_out_of_search_mode_without_initial_query(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         self.assertFalse(app.search_mode)
 
     def test_starts_out_of_search_mode_with_initial_query(self) -> None:
-        app = SimplePlayApp(initial_query="daft punk")
+        app = TsetseApp(initial_query="daft punk")
         self.assertFalse(app.search_mode)
 
     def test_slash_starts_fresh_search(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         app.search_query = "old query"
 
         app._handle_key(ord("/"))
@@ -25,7 +25,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(app.search_query, "")
 
     def test_typing_in_search_mode_schedules_live_search(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         app.search_mode = True
 
         app._handle_search_key(ord("d"))
@@ -34,7 +34,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertIsNotNone(app.search_debounce_deadline)
 
     def test_live_search_starts_when_debounce_expires(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         started: list[str] = []
         app.search_mode = True
         app.search_query = "daft punk"
@@ -46,7 +46,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(started, ["daft punk"])
 
     def test_enter_skips_duplicate_search_when_results_are_current(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         started: list[str] = []
         app.search_mode = True
         app.search_query = "daft punk"
@@ -59,7 +59,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(started, [])
 
     def test_uppercase_h_lowers_volume(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         changes: list[int] = []
 
         app.player.change_volume = lambda delta: changes.append(delta)  # type: ignore[method-assign]
@@ -71,7 +71,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(app.status_message, "Volume: 95%")
 
     def test_uppercase_l_raises_volume(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         changes: list[int] = []
 
         app.player.change_volume = lambda delta: changes.append(delta)  # type: ignore[method-assign]
@@ -83,7 +83,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(app.status_message, "Volume: 105%")
 
     def test_load_track_starts_pending_playback_before_stream_resolve(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         track = Track(video_id="abc123", title="Song")
         resolved: list[str] = []
 
@@ -96,7 +96,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(app.status_message, "Loading: Song")
 
     def test_pending_playback_uses_cached_stream_when_ready(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         track = Track(video_id="abc123", title="Song")
         loads: list[tuple[str, str | None]] = []
         synced: list[bool] = []
@@ -115,7 +115,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(app.status_message, "Playing: Song")
 
     def test_pending_playback_waits_for_resolved_stream_url(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         track = Track(video_id="abc123", title="Song")
         loads: list[tuple[str, str | None]] = []
 
@@ -131,7 +131,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(app.status_message, "Loading: Song")
 
     def test_play_selected_seeds_queue_from_search_results(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         first = Track(video_id="one", title="One")
         second = Track(video_id="two", title="Two")
         third = Track(video_id="three", title="Three")
@@ -151,7 +151,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(app.results, [first, third])
 
     def test_related_error_does_not_override_current_playback_status(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         track = Track(video_id="abc123", title="Song")
 
         app.current_track = track
@@ -170,7 +170,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertNotIn(track.video_id, app.pending_related)
 
     def test_stream_error_for_current_track_clears_pending_playback_and_surfaces_message(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         track = Track(video_id="abc123", title="Song")
         loads: list[tuple[str, str | None]] = []
 
@@ -191,7 +191,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(app.status_message, "Video is unavailable on YouTube.")
 
     def test_stream_error_removes_unplayable_track_from_queue(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         current = Track(video_id="now", title="Now")
         broken = Track(video_id="bad", title="Broken")
         healthy = Track(video_id="good", title="Healthy")
@@ -213,7 +213,7 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual([track.video_id for track in app.results], ["good"])
 
     def test_core_idle_change_resumes_autoplay_when_waiting(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         current = Track(video_id="now", title="Now")
         healthy = Track(video_id="good", title="Healthy")
         resumed: list[bool] = []
@@ -229,14 +229,14 @@ class SimplePlayAppTests(unittest.TestCase):
         self.assertEqual(resumed, [True])
 
     def test_volume_property_change_updates_state(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
 
         app._handle_player_payload({"event": "property-change", "name": "volume", "data": 72.0})
 
         self.assertEqual(app.volume, 72.0)
 
     def test_sync_mpv_playlist_uses_resolved_queue_prefix(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         history = Track(video_id="hist", title="History")
         current = Track(video_id="now", title="Now")
         first = Track(video_id="next1", title="Next 1")

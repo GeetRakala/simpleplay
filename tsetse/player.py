@@ -31,7 +31,7 @@ class MPVController:
             return
 
         self._stop_event.clear()
-        self.socket_path = f"/tmp/simpleplay-mpv-{uuid.uuid4().hex}.sock"
+        self.socket_path = f"/tmp/tsetse-mpv-{uuid.uuid4().hex}.sock"
         try:
             os.unlink(self.socket_path)
         except FileNotFoundError:

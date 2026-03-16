@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0 - 2026-03-16
+
+- rename the project, package, CLI, and documentation from `simpleplay` to `tsetse`
+- update packaging metadata and publish configuration for the `tsetse` project name
+
 ## 0.1.3 - 2026-03-12
 
 - restore `mpv` next/previous controls by mirroring the resolved prefix of the queue back into `mpv`

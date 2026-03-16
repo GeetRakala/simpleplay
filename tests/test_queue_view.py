@@ -3,13 +3,13 @@ from __future__ import annotations
 from collections import deque
 import unittest
 
-from simpleplay.app import SimplePlayApp
-from simpleplay.models import Track
+from tsetse.app import TsetseApp
+from tsetse.models import Track
 
 
 class QueueViewTests(unittest.TestCase):
     def test_selecting_from_queue_repopulates_results(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         current = Track(video_id="current", title="Current")
         first = Track(video_id="first", title="First")
         second = Track(video_id="second", title="Second")

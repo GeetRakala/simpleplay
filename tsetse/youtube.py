@@ -568,7 +568,7 @@ def _load_yt_dlp() -> tuple[type[Any], type[Exception]]:
         from yt_dlp import YoutubeDL
         from yt_dlp.utils import DownloadError
     except ModuleNotFoundError as exc:
-        raise YouTubeError("Python package 'yt-dlp' is not installed. Reinstall simpleplay with pip.") from exc
+        raise YouTubeError("Python package 'yt-dlp' is not installed. Reinstall tsetse with pip.") from exc
     return YoutubeDL, DownloadError
 
 

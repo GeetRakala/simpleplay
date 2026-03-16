@@ -3,13 +3,13 @@ from __future__ import annotations
 from collections import deque
 import unittest
 
-from simpleplay.app import SimplePlayApp
-from simpleplay.models import Track
+from tsetse.app import TsetseApp
+from tsetse.models import Track
 
 
 class PlaylistSyncTests(unittest.TestCase):
     def test_playlist_position_change_updates_current_history_and_queue(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         first = Track(video_id="one", title="One")
         second = Track(video_id="two", title="Two")
         third = Track(video_id="three", title="Three")
@@ -33,7 +33,7 @@ class PlaylistSyncTests(unittest.TestCase):
         self.assertEqual([track.video_id for track in app.results], ["two", "three"])
 
     def test_playlist_position_change_preserves_unmirrored_queue_tail(self) -> None:
-        app = SimplePlayApp()
+        app = TsetseApp()
         first = Track(video_id="one", title="One")
         second = Track(video_id="two", title="Two")
         third = Track(video_id="three", title="Three")

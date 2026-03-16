@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from simpleplay.models import LoopMode, StreamCacheEntry, Track, format_duration
+from tsetse.models import LoopMode, StreamCacheEntry, Track, format_duration
 
 
 class FormatDurationTests(unittest.TestCase):
